@@ -74,7 +74,7 @@ An [LLM-powered bot system](docs/architecture/llm-bot-system-design.md), with de
 ### Next: the project is in the maintenance mode.
 
 ### Future (possible) phases
-- Support of paved areas and buildings
+- Support of buildings
 - Physical attacks
 - Support of advanced tech rules (Clan, LosTech equipment and more)
 - Support for vehicles, battle armor and infantry

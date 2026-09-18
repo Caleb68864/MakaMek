@@ -59,6 +59,13 @@ public class MapGeneratorBuilder
         return this;
     }
 
+    /// <summary>Adds broad paved-area patches covering the given fraction of the map.</summary>
+    /// <param name="coverage">Fraction of map hexes to cover, from 0.0 to 1.0.</param>
+    public MapGeneratorBuilder WithPavedAreas(double coverage)
+    {
+        return WithTerrain<PavementTerrain>(coverage);
+    }
+
     /// <summary>
     /// Convenience method for forest generation.
     /// Produces organic forest patches mixing light and heavy woods.
@@ -211,4 +218,3 @@ public class MapGeneratorBuilder
         return new CompositeGenerator(_width, _height, _baseTerrain, _levelProvider, builtOverlays, CreateRng());
     }
 }
-

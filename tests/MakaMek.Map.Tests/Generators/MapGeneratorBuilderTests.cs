@@ -155,6 +155,34 @@ public class MapGeneratorBuilderTests
         hasTerrain.ShouldBeTrue();
     }
 
+    [Fact]
+    public void WithPavedAreas_ProducesPavementHexes()
+    {
+        var sut = new MapGeneratorBuilder(Width, Height)
+            .WithBaseTerrain(new ClearTerrain())
+            .WithPavedAreas(coverage: 0.5)
+            .WithSeed(42)
+            .Build();
+
+        var hasPavement = AllCoords()
+            .Select(sut.Generate)
+            .Any(h => h.HasTerrain(MakaMekTerrains.Pavement));
+
+        hasPavement.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(1.1)]
+    public void WithPavedAreas_WithInvalidCoverage_ThrowsArgumentOutOfRangeException(double coverage)
+    {
+        var builder = new MapGeneratorBuilder(Width, Height);
+
+        var ex = Should.Throw<ArgumentOutOfRangeException>(() => builder.WithPavedAreas(coverage));
+
+        ex.ParamName.ShouldBe("coverage");
+    }
+
     [Theory]
     [InlineData(-0.1, 0.5)]
     [InlineData(1.1, 0.5)]

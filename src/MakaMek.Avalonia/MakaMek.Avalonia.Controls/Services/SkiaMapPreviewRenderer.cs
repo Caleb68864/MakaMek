@@ -14,6 +14,7 @@ public class SkiaMapPreviewRenderer : IMapPreviewRenderer
     private static readonly SKColor HeavyWoodsColor = new(0x55, 0x6B, 0x2F);
     private static readonly SKColor RoughColor = new(0x70, 0x78, 0x72);
     private static readonly SKColor WaterColor = new(0x46, 0x82, 0xB4);
+    private static readonly SKColor PavementColor = new(0xA6, 0xA6, 0xA6);
     private static readonly SKColor BackgroundColor = new(0xE0, 0xE0, 0xE0);
     private static readonly SKColor RoadColor = new(0x33, 0x33, 0x33);
     private static readonly SKColor RubbleColor = new(0x8B, 0x7D, 0x6B);
@@ -101,8 +102,18 @@ public class SkiaMapPreviewRenderer : IMapPreviewRenderer
 
                     if (hex.HasTerrain(MakaMekTerrains.Road) || hex.HasTerrain(MakaMekTerrains.Bridge))
                     {
-                        var mask = (byte)(_bitmaskService.ComputeRawBitmask(map, coordinates, MakaMekTerrains.Road) 
-                                          | _bitmaskService.ComputeRawBitmask(map, coordinates, MakaMekTerrains.Bridge));
+                        using var roadNodePaint = new SKPaint
+                        {
+                            IsAntialias = true,
+                            Color = RoadColor,
+                            Style = SKPaintStyle.Fill
+                        };
+                        canvas.DrawCircle(x, y, dotDiameter * 0.12f, roadNodePaint);
+
+                        var mask = (byte)(_bitmaskService.ComputeRawBitmask(map, coordinates, MakaMekTerrains.Road,
+                                             (current, neighbor) => current.CanRoadConnectTo(neighbor))
+                                          | _bitmaskService.ComputeRawBitmask(map, coordinates, MakaMekTerrains.Bridge,
+                                             (current, neighbor) => current.CanRoadConnectTo(neighbor)));
                         for (var i = 0; i < 6; i++)
                         {
                             if ((mask & (1 << i)) == 0) continue;
@@ -141,6 +152,15 @@ public class SkiaMapPreviewRenderer : IMapPreviewRenderer
 
     private static SKColor GetTerrainColor(Hex hex)
     {
+        // Pavement represents a broad hard surface, so it should replace the
+        // underlying terrain color in the compact map preview. Roads and
+        // bridges remain overlays/connecting lines below.
+        if (hex.HasTerrain(MakaMekTerrains.Rubble))
+            return RubbleColor;
+
+        if (hex.HasTerrain(MakaMekTerrains.Pavement))
+            return PavementColor;
+
         var terrain = hex.GetTerrains().FirstOrDefault(t => t.Id
             is MakaMekTerrains.Clear
             or MakaMekTerrains.LightWoods
