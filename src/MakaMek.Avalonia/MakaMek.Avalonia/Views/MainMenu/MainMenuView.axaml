@@ -6,6 +6,7 @@
              xmlns:extensions="using:Sanet.MakaMek.Avalonia.Controls.Extensions"
              xmlns:templatedControls="using:Sanet.MakaMek.Avalonia.Controls.TemplatedControls"
              xmlns:fragments="using:Sanet.MakaMek.Avalonia.Controls.Fragments"
+             xmlns:views="using:Sanet.MakaMek.Avalonia.Views"
              mc:Ignorable="d" d:DesignWidth="600" d:DesignHeight="400"
              x:DataType="viewModels:MainMenuViewModel"
              x:Class="Sanet.MakaMek.Avalonia.Views.MainMenu.MainMenuView">
@@ -41,6 +42,8 @@
                     Command="{Binding SettingsCommand}"
                     HorizontalAlignment="Stretch"
                     MinWidth="200"/>
+            <Button x:Name="SpikeButton" Content="Record sheet spike"
+                    IsVisible="False" Click="ShowRecordSheetSpike" />
         </StackPanel>
 
         <!-- Logo & Version -->
@@ -58,6 +61,11 @@
                        Text="{Binding Version}"/>
         </StackPanel>
 
+        <Grid x:Name="SpikeHost" IsVisible="False" Background="White">
+            <views:RecordSheetSpikeView />
+            <Button Content="Back" Click="HideRecordSheetSpike"
+                    HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12" />
+        </Grid>
+
     </Grid>
 </UserControl>
-

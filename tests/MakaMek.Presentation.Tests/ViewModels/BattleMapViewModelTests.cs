@@ -2495,6 +2495,8 @@ public class BattleMapViewModelTests
         _sut.SelectedUnitEvents.Count.ShouldBe(2);
         _sut.SelectedUnitEvents[0].Type.ShouldBe(UiEventType.ArmorDamage);
         _sut.SelectedUnitEvents[1].Type.ShouldBe(UiEventType.Explosion);
+        _sut.RecordSheet.Unit.ShouldBeSameAs(unit);
+        _sut.RecordSheet.DiagramData!.Tonnage.ShouldBe(unit.Tonnage);
     }
 
     [Fact]

@@ -22,6 +22,7 @@ using Sanet.MakaMek.Map.Models;
 using Sanet.MakaMek.Map.Models.Highlights;
 using Sanet.MakaMek.Map.Services;
 using Sanet.MakaMek.Presentation.UiStates;
+using Sanet.MakaMek.Presentation.RecordSheet;
 using Sanet.MakaMek.Presentation.ViewModels.Wrappers;
 using Sanet.MakaMek.Services;
 using Sanet.MVVM.Core.Models;
@@ -369,6 +370,7 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
     private void ProcessCommand(IGameCommand command)
     {
         if (Game == null) return;
+        RecordSheet.Refresh();
         var formattedCommand = command.Render(_localizationService, Game);
         _commandLog.Add(formattedCommand);
         NotifyPropertyChanged(nameof(CommandLog));
@@ -763,6 +765,9 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
 
     public IImageService ImageService { get; }
 
+    /// <summary>Read-only snapshot of the currently selected unit for the record-sheet view.</summary>
+    public RecordSheetViewModel RecordSheet { get; } = new();
+
     public IUnit? SelectedUnit
     {
         get => CurrentState.SelectedUnit;
@@ -781,6 +786,8 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
         NotifyPropertyChanged(nameof(AreUnitsToDeployVisible));
         NotifyPropertyChanged(nameof(IsRecordSheetButtonVisible));
         NotifyPropertyChanged(nameof(IsRecordSheetPanelVisible));
+
+        RecordSheet.SelectUnit(SelectedUnit);
 
         UpdateSelectedUnitEvents();
 

@@ -24,6 +24,7 @@ using Sanet.MakaMek.Localization;
 using Sanet.MakaMek.Map.Factories;
 using Sanet.MakaMek.Map.Services;
 using Sanet.MakaMek.Presentation.ViewModels;
+using Sanet.MakaMek.Presentation.RecordSheet;
 using Sanet.MakaMek.Services;
 using Sanet.MakaMek.Avalonia.Controls.Services;
 using Sanet.MakaMek.Services.Avalonia;
@@ -38,8 +39,36 @@ public static class CoreServices
 {
     public static void RegisterServices(this IServiceCollection services)
     {
+        services.AddSingleton<IRecordSheetLayout, RecordSheetLayout>();
+
         // Factory that maps AssetProviderConfigData to concrete IResourceStreamProvider instances.
         services.AddSingleton<IResourceStreamProviderFactory, ResourceStreamProviderFactory>();
+
+        services.AddSingleton<IRecordSheetTemplateProvider>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<RecordSheetTemplateProvider>>();
+            var localRoot = Environment.GetEnvironmentVariable("MAKAMEK_MM_DATA_ROOT");
+            if (!string.IsNullOrWhiteSpace(localRoot))
+                return RecordSheetTemplateProvider.FromLocalCheckout(localRoot, logger);
+
+            // Debug fallback for sandboxed heads, which cannot read a developer's local checkout.
+            var recordSheetsUrl = "https://api.github.com/repos/MegaMek/mm-data/contents/data/images/recordsheets";
+            var cachingService = sp.GetRequiredService<IFileCachingService>();
+            var loggerFactory = sp.GetRequiredService<ILogger<GitHubResourceStreamProvider>>();
+            var templates = new GitHubResourceStreamProvider(
+                "svg",
+                recordSheetsUrl,
+                "templates_us",
+                cachingService,
+                loggerFactory);
+            var pipClusters = new GitHubResourceStreamProvider(
+                "svg",
+                recordSheetsUrl,
+                "biped_pips",
+                cachingService,
+                loggerFactory);
+            return new RecordSheetTemplateProvider([templates, pipClusters], logger);
+        });
 
         // Unit caching service — providers are resolved lazily from IAssetProviderConfigurationProvider
         // on first cache access, so users can add/remove/toggle providers in Settings and the

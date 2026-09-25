@@ -29,7 +29,10 @@
         <ProjectReference Include="..\MakaMek.Services.Avalonia.Browser\MakaMek.Services.Avalonia.Browser.csproj"/>
     </ItemGroup>
 
-    <ItemGroup>
-        <Content Include="..\MakaMek.Services.Avalonia.Browser\wwwroot\cacheStorage.js" Link="wwwroot\cacheStorage.js" />
-    </ItemGroup>
+    <Target Name="CopyBrowserCacheStorageAsset" BeforeTargets="ResolveStaticWebAssetsInputs">
+        <Copy
+            SourceFiles="$(MSBuildProjectDirectory)\..\MakaMek.Services.Avalonia.Browser\wwwroot\cacheStorage.js"
+            DestinationFiles="$(MSBuildProjectDirectory)\wwwroot\cacheStorage.js"
+            SkipUnchangedFiles="true" />
+    </Target>
 </Project>
