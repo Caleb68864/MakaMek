@@ -10,6 +10,7 @@ using System.Xml;
 using System.Xml.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Microsoft.Extensions.Logging;
@@ -24,6 +25,8 @@ namespace Sanet.MakaMek.Avalonia.Controls;
 /// <summary>Composes an unmodified MegaMek sheet with value-selected pip artwork.</summary>
 public sealed class ArmourDiagram : UserControl
 {
+    private const double SheetMargin = 12;
+
     public static readonly StyledProperty<RecordSheetViewModel?> ViewModelProperty =
         AvaloniaProperty.Register<ArmourDiagram, RecordSheetViewModel?>(nameof(ViewModel));
 
@@ -46,8 +49,15 @@ public sealed class ArmourDiagram : UserControl
         Content = new ScrollViewer
         {
             Background = Brushes.White,
-            Content = _image
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = new Border
+            {
+                Padding = new Thickness(SheetMargin),
+                Child = _image
+            }
         };
+        SizeChanged += OnSizeChanged;
     }
 
     public RecordSheetViewModel? ViewModel
@@ -78,6 +88,8 @@ public sealed class ArmourDiagram : UserControl
         if (data is null)
         {
             _image.Source = null;
+            _image.Width = double.NaN;
+            _image.Height = double.NaN;
             return;
         }
 
@@ -123,7 +135,10 @@ public sealed class ArmourDiagram : UserControl
             png.Position = 0;
             var renderedBitmap = new Bitmap(png);
             if (generation == Volatile.Read(ref _renderGeneration))
+            {
                 _image.Source = renderedBitmap;
+                ResizeImage(Bounds.Width);
+            }
             else
                 renderedBitmap.Dispose();
         }
@@ -131,6 +146,18 @@ public sealed class ArmourDiagram : UserControl
         {
             _logger.LogWarning(ex, "Record-sheet diagram could not be rendered");
         }
+    }
+
+    private void OnSizeChanged(object? sender, SizeChangedEventArgs e) => ResizeImage(e.NewSize.Width);
+
+    private void ResizeImage(double availableWidth)
+    {
+        if (_image.Source is not Bitmap bitmap || availableWidth <= SheetMargin * 2)
+            return;
+
+        var width = availableWidth - SheetMargin * 2;
+        _image.Width = width;
+        _image.Height = width * bitmap.PixelSize.Height / bitmap.PixelSize.Width;
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)

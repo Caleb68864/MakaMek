@@ -1,6 +1,7 @@
 using System.Text;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -35,6 +36,15 @@ public class ArmourDiagramTests
             control.Arrange(new Rect(0, 0, 900, 1200));
 
             await control.RenderAsync(RecordSheetSamples.LightMech);
+            var scrollViewer = (ScrollViewer)control.Content!;
+            var sheetFrame = (Border)scrollViewer.Content!;
+            var image = (Image)sheetFrame.Child!;
+            scrollViewer.HorizontalScrollBarVisibility.ShouldBe(ScrollBarVisibility.Disabled);
+            sheetFrame.Padding.ShouldBe(new Thickness(12));
+            image.Width.ShouldBe(876);
+            control.Measure(new Size(700, 1200));
+            control.Arrange(new Rect(0, 0, 700, 1200));
+            image.Width.ShouldBe(676);
             var lightPng = control.RenderToPngBytes(900, 1200);
             await control.RenderAsync(RecordSheetSamples.AssaultMech);
             var assaultPng = control.RenderToPngBytes(900, 1200);
