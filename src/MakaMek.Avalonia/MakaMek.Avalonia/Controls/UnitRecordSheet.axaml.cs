@@ -1,7 +1,13 @@
+using System.ComponentModel;
 using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Sanet.MakaMek.Assets.Services;
 using Sanet.MakaMek.Core.Models.Units;
+using Sanet.MakaMek.Core.Models.Units.Mechs;
+using Sanet.MakaMek.Presentation.RecordSheet;
 using Sanet.MakaMek.Presentation.ViewModels.Wrappers;
 
 namespace Sanet.MakaMek.Avalonia.Controls;
@@ -17,6 +23,7 @@ public partial class UnitRecordSheet : UserControl
     static UnitRecordSheet()
     {
         UnitProperty.Changed.AddClassHandler<UnitRecordSheet>((sender, _) => sender.OnUnitChanged());
+        DiagramViewModelProperty.Changed.AddClassHandler<UnitRecordSheet>((sender, _) => sender.OnDiagramViewModelChanged());
     }
 
     public static readonly StyledProperty<bool> ShowHeatLevelPanelProperty =
@@ -42,6 +49,16 @@ public partial class UnitRecordSheet : UserControl
 
     public static readonly StyledProperty<string?> EditableNameProperty =
         AvaloniaProperty.Register<UnitRecordSheet, string?>(nameof(EditableName));
+
+    public static readonly StyledProperty<RecordSheetViewModel?> DiagramViewModelProperty =
+        AvaloniaProperty.Register<UnitRecordSheet, RecordSheetViewModel?>(nameof(DiagramViewModel));
+
+    private readonly IRecordSheetTemplateProvider? _recordSheetAssets;
+    private readonly IRecordSheetLayout? _recordSheetLayout;
+    private readonly ILogger<ArmourDiagram>? _diagramLogger;
+    private RecordSheetViewModel? _localDiagramViewModel;
+    private RecordSheetViewModel? _observedDiagramViewModel;
+    private ArmourDiagram? _armourDiagram;
 
     public Unit? Unit
     {
@@ -103,8 +120,32 @@ public partial class UnitRecordSheet : UserControl
         set => SetValue(EditableNameProperty, value);
     }
 
+    public RecordSheetViewModel? DiagramViewModel
+    {
+        get => GetValue(DiagramViewModelProperty);
+        set => SetValue(DiagramViewModelProperty, value);
+    }
+
     public UnitRecordSheet()
     {
+        if (Application.Current is App app && app.ServiceProvider is { } services)
+        {
+            _recordSheetAssets = services.GetService<IRecordSheetTemplateProvider>();
+            _recordSheetLayout = services.GetService<IRecordSheetLayout>();
+            _diagramLogger = services.GetService<ILogger<ArmourDiagram>>();
+        }
+
+        InitializeComponent();
+    }
+
+    public UnitRecordSheet(
+        IRecordSheetTemplateProvider? recordSheetAssets,
+        IRecordSheetLayout? recordSheetLayout,
+        ILogger<ArmourDiagram>? diagramLogger)
+    {
+        _recordSheetAssets = recordSheetAssets;
+        _recordSheetLayout = recordSheetLayout;
+        _diagramLogger = diagramLogger;
         InitializeComponent();
     }
 
@@ -123,5 +164,71 @@ public partial class UnitRecordSheet : UserControl
         {
             EditablePilot = null;
         }
+
+        UpdateRecordSheetDiagram();
     }
+
+    private void OnDiagramViewModelChanged()
+    {
+        if (!ReferenceEquals(_observedDiagramViewModel, DiagramViewModel))
+        {
+            if (_observedDiagramViewModel is not null)
+                _observedDiagramViewModel.PropertyChanged -= OnDiagramViewModelPropertyChanged;
+
+            _observedDiagramViewModel = DiagramViewModel;
+            if (_observedDiagramViewModel is not null)
+                _observedDiagramViewModel.PropertyChanged += OnDiagramViewModelPropertyChanged;
+        }
+
+        UpdateRecordSheetDiagram();
+    }
+
+    private void OnDiagramViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(RecordSheetViewModel.Unit) or nameof(RecordSheetViewModel.DiagramData))
+            UpdateRecordSheetDiagram();
+    }
+
+    private void UpdateRecordSheetDiagram()
+    {
+        if (Unit is not Mech mech)
+        {
+            RecordSheetTab.IsVisible = false;
+            if (_armourDiagram is not null)
+                _armourDiagram.ViewModel = null;
+            return;
+        }
+
+        if (_recordSheetAssets is null || _recordSheetLayout is null || _diagramLogger is null)
+        {
+            RecordSheetTab.IsVisible = false;
+            return;
+        }
+
+        var diagramViewModel = DiagramViewModel;
+        if (diagramViewModel is null)
+        {
+            _localDiagramViewModel ??= new RecordSheetViewModel();
+            if (!ReferenceEquals(_localDiagramViewModel.Unit, mech))
+                _localDiagramViewModel.SelectUnit(mech);
+            diagramViewModel = _localDiagramViewModel;
+        }
+
+        if (!ReferenceEquals(diagramViewModel.Unit, mech) || diagramViewModel.DiagramData is null)
+            return;
+
+        _armourDiagram ??= CreateArmourDiagram();
+        _armourDiagram.ViewModel = diagramViewModel;
+    }
+
+    private ArmourDiagram CreateArmourDiagram()
+    {
+        var diagram = new ArmourDiagram(_recordSheetAssets!, _recordSheetLayout!, _diagramLogger!);
+        diagram.TemplateAvailabilityChanged += OnTemplateAvailabilityChanged;
+        RecordSheetDiagramHost.Children.Add(diagram);
+        return diagram;
+    }
+
+    private void OnTemplateAvailabilityChanged(object? sender, bool isAvailable) =>
+        RecordSheetTab.IsVisible = Unit is Mech && isAvailable;
 }

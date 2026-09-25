@@ -37,6 +37,9 @@ public sealed class ArmourDiagram : UserControl
     private readonly Image _image = new() { Stretch = Stretch.Uniform };
     private RecordSheetViewModel? _viewModel;
     private long _renderGeneration;
+    private bool _isTemplateAvailable;
+
+    public event EventHandler<bool>? TemplateAvailabilityChanged;
 
     public ArmourDiagram(
         IRecordSheetTemplateProvider assets,
@@ -90,13 +93,19 @@ public sealed class ArmourDiagram : UserControl
             _image.Source = null;
             _image.Width = double.NaN;
             _image.Height = double.NaN;
+            SetTemplateAvailability(false);
             return;
         }
 
         try
         {
             await using var template = await _assets.GetTemplateAsync("mek_biped_default.svg");
-            if (template is null) return;
+            if (template is null)
+            {
+                if (generation == Volatile.Read(ref _renderGeneration))
+                    SetTemplateAvailability(false);
+                return;
+            }
 
             var document = XDocument.Load(template);
             var root = document.Root;
@@ -105,6 +114,8 @@ public sealed class ArmourDiagram : UserControl
             if (root is null || armourPips is null || structurePips is null)
             {
                 _logger.LogWarning("Biped record-sheet template is missing a pip overlay layer");
+                if (generation == Volatile.Read(ref _renderGeneration))
+                    SetTemplateAvailability(false);
                 return;
             }
 
@@ -127,6 +138,8 @@ public sealed class ArmourDiagram : UserControl
             if (svg.Load(svgStream) is null)
             {
                 _logger.LogWarning("Composed biped record-sheet SVG could not be parsed");
+                if (generation == Volatile.Read(ref _renderGeneration))
+                    SetTemplateAvailability(false);
                 return;
             }
 
@@ -138,6 +151,7 @@ public sealed class ArmourDiagram : UserControl
             {
                 _image.Source = renderedBitmap;
                 ResizeImage(Bounds.Width);
+                SetTemplateAvailability(true);
             }
             else
                 renderedBitmap.Dispose();
@@ -145,7 +159,16 @@ public sealed class ArmourDiagram : UserControl
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Record-sheet diagram could not be rendered");
+            if (generation == Volatile.Read(ref _renderGeneration))
+                SetTemplateAvailability(false);
         }
+    }
+
+    private void SetTemplateAvailability(bool isAvailable)
+    {
+        if (_isTemplateAvailable == isAvailable) return;
+        _isTemplateAvailable = isAvailable;
+        TemplateAvailabilityChanged?.Invoke(this, isAvailable);
     }
 
     private void OnSizeChanged(object? sender, SizeChangedEventArgs e) => ResizeImage(e.NewSize.Width);

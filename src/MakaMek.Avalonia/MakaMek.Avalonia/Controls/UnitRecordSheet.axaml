@@ -11,7 +11,7 @@
          against the control's own properties, so no root x:DataType is required. -->
     <Grid RowDefinitions="*,Auto">
         <!-- Tabs -->
-        <TabControl Grid.Row="0" Margin="0,5,0,0">
+        <TabControl x:Name="RecordSheetTabs" Grid.Row="0" Margin="0,5,0,0">
             <TabItem>
                 <TabItem.Header>
                     <TextBlock Classes="h3" FontFamily="{StaticResource AwesomeFontSolid}" Text="&#xf05a;"/>
@@ -37,6 +37,12 @@
                     <TextBlock Classes="h3" FontFamily="{StaticResource AwesomeFontSolid}" Text="&#xf132;"/>
                 </TabItem.Header>
                 <controls:UnitHealthIndicator Unit="{Binding #UnitRecordSheetControl.Unit}"/>
+            </TabItem>
+            <TabItem x:Name="RecordSheetTab" IsVisible="False">
+                <TabItem.Header>
+                    <TextBlock Text="{extensions:Localize 'BattleMap_UnitInfo'}"/>
+                </TabItem.Header>
+                <Grid x:Name="RecordSheetDiagramHost" Background="White"/>
             </TabItem>
             <TabItem>
                 <TabItem.Header>
