@@ -190,6 +190,7 @@
 
             <!-- Record Sheet Button -->
             <templatedControls:ActionButton
+                AutomationProperties.Name="{extensions:Localize 'BattleMap_UnitInfo'}"
                 IsVisible="{Binding IsRecordSheetButtonVisible}"
                 Command="{Binding ToggleRecordSheet}"
                 ToolTip.Tip="{extensions:Localize 'BattleMap_UnitInfo'}"
@@ -197,6 +198,7 @@
 
             <!-- Target Preview Button (opt-in during weapon target selection) -->
             <templatedControls:ActionButton
+                AutomationProperties.Name="{extensions:Localize 'BattleMap_TargetPreview'}"
                 IsVisible="{Binding IsTargetPreviewButtonVisible}"
                 Command="{Binding ToggleTargetPreviewCommand}"
                 ToolTip.Tip="{extensions:Localize 'BattleMap_TargetPreview'}"

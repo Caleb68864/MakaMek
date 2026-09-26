@@ -209,6 +209,9 @@ public class ArmourDiagramTests
             await Task.Delay(50);
             var recentDamage = control.RenderToPngBytes(900, 1200);
             recentDamage.SequenceEqual(afterDamage).ShouldBeFalse();
+            using (var highlightedBitmap = SKBitmap.Decode(recentDamage))
+                highlightedBitmap!.Pixels.Count(pixel => pixel.Red > 120 && pixel.Red > pixel.Green)
+                    .ShouldBeGreaterThan(0);
 
             viewModel.ClearRecentDamage();
             await Task.Delay(50);
@@ -382,7 +385,7 @@ public class ArmourDiagramTests
         var x = 20 + Math.Abs(name.GetHashCode()) % 500;
         return $"""
             <svg xmlns="http://www.w3.org/2000/svg" width="576" height="756" viewBox="0 0 576 756">
-              <switch><g><path d="M{x} 80h40v40h-40z" fill="black"/></g></switch>
+              <switch><g><path d="M{x} 80h40v40h-40z" fill="none" stroke="#000000" stroke-width="0.5"/></g></switch>
             </svg>
             """;
     }

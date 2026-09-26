@@ -30,6 +30,7 @@
                             <controls:ActionButton
                                 Command="{TemplateBinding CloseCommand}"
                                 IconData="{StaticResource CloseIcon}"
+                                AutomationProperties.Name="{TemplateBinding Title}"
                                 HorizontalAlignment="Right"
                                 Background="Transparent"/>
                         </Grid>

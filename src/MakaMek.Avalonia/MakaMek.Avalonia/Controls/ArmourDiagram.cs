@@ -106,7 +106,7 @@ public sealed class ArmourDiagram : UserControl
     {
         if (data is null)
         {
-            _image.Source = null;
+            SetImageSource(null);
             _image.Width = double.NaN;
             _image.Height = double.NaN;
             SetTemplateAvailability(false);
@@ -181,7 +181,7 @@ public sealed class ArmourDiagram : UserControl
             var renderedBitmap = new Bitmap(png);
             if (generation == Volatile.Read(ref _renderGeneration))
             {
-                _image.Source = renderedBitmap;
+                SetImageSource(renderedBitmap);
                 ResizeImage(Bounds.Width);
                 SetTemplateAvailability(true);
                 StartArtworkLookup(data, generation);
@@ -214,6 +214,14 @@ public sealed class ArmourDiagram : UserControl
         var width = availableWidth - SheetMargin * 2;
         _image.Width = width;
         _image.Height = width * bitmap.PixelSize.Height / bitmap.PixelSize.Width;
+    }
+
+    private void SetImageSource(Bitmap? source)
+    {
+        var previous = _image.Source as Bitmap;
+        _image.Source = source;
+        if (!ReferenceEquals(previous, source))
+            previous?.Dispose();
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -681,15 +689,21 @@ public sealed class ArmourDiagram : UserControl
                         .ToString("0.###", CultureInfo.InvariantCulture),
                 _ => "1"
             };
+            var renderedSwitch = new XElement(sourceSwitch);
+            if (recentlyDamaged)
+            {
+                foreach (var path in renderedSwitch.Descendants(SvgNamespace + "path"))
+                {
+                    path.SetAttributeValue("stroke", "#e4572e");
+                    path.SetAttributeValue("stroke-width", "1.5");
+                }
+            }
+
             overlayLayer.Add(new XElement(SvgNamespace + "g",
                 new XAttribute("data-template-region", regionId),
-                recentlyDamaged ? new XAttribute("stroke", "#e4572e")
-                    : null,
-                recentlyDamaged ? new XAttribute("stroke-width", "1.5")
-                    : null,
                 recentlyDamaged ? new XAttribute("data-recent-damage", location.ToString()) : null,
                 new XAttribute("opacity", opacity),
-                new XElement(sourceSwitch)));
+                renderedSwitch));
 
             if (document is not null && partData is null)
                 SetValueText(document, "textIS_" + regionId["isPips".Length..],
