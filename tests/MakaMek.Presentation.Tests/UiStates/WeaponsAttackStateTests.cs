@@ -223,6 +223,7 @@ public class WeaponsAttackStateTests
     {
         _battleMapViewModel.IsTargetPreviewButtonVisible.ShouldBeFalse();
         _battleMapViewModel.IsTargetPreviewPanelVisible.ShouldBeFalse();
+        _battleMapViewModel.ShownTargetPreviewUnit.ShouldBeNull();
 
         SetPhase(PhaseNames.WeaponsAttack);
         SetActivePlayer();
@@ -240,16 +241,19 @@ public class WeaponsAttackStateTests
 
         _battleMapViewModel.IsTargetPreviewButtonVisible.ShouldBeTrue();
         _battleMapViewModel.IsTargetPreviewPanelVisible.ShouldBeFalse();
+        _battleMapViewModel.ShownTargetPreviewUnit.ShouldBeNull();
         _battleMapViewModel.TargetPreviewUnit.ShouldBe(target);
         var selectedWeaponTargets = attacker.WeaponAttackState.WeaponTargets.ToDictionary();
         var selectionVisible = _battleMapViewModel.IsWeaponSelectionVisible;
 
         _battleMapViewModel.ToggleTargetPreviewCommand.Execute(null);
         _battleMapViewModel.IsTargetPreviewPanelVisible.ShouldBeTrue();
+        _battleMapViewModel.ShownTargetPreviewUnit.ShouldBeSameAs(target);
         _battleMapViewModel.RecordSheet.Unit.ShouldBeSameAs(target);
         _battleMapViewModel.ToggleTargetPreviewCommand.Execute(null);
 
         _battleMapViewModel.IsTargetPreviewPanelVisible.ShouldBeFalse();
+        _battleMapViewModel.ShownTargetPreviewUnit.ShouldBeNull();
         _sut.SelectedTarget.ShouldBe(target);
         attacker.WeaponAttackState.WeaponTargets.ShouldBe(selectedWeaponTargets);
         _battleMapViewModel.IsWeaponSelectionVisible.ShouldBe(selectionVisible);

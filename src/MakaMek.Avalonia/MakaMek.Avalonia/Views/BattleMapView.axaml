@@ -276,7 +276,7 @@
             Title="{Binding SelectedUnit.Name}"
             CloseCommand="{Binding ToggleRecordSheet}">
             <controls:UnitRecordSheet
-                Unit="{Binding SelectedUnit}"
+                Unit="{Binding ShownRecordSheetUnit}"
                 DiagramViewModel="{Binding RecordSheet}"
                 HeatProjection="{Binding SelectedUnitHeatProjection}"
                 ShowHeatLevelPanel="True"
@@ -291,7 +291,8 @@
             HorizontalAlignment="Right"
             VerticalAlignment="Center">
             <controls:UnitRecordSheet
-                Unit="{Binding TargetPreviewUnit}"
+                Unit="{Binding ShownTargetPreviewUnit}"
+                PreferDiagram="True"
                 DiagramViewModel="{Binding RecordSheet}"
                 ShowHeatLevelPanel="False"
                 ShowEventsTab="False" />

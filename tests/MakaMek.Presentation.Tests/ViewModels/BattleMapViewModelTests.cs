@@ -1213,6 +1213,7 @@ public class BattleMapViewModelTests
 
         // Act & Assert
         _sut.IsRecordSheetPanelVisible.ShouldBeTrue();
+        _sut.ShownRecordSheetUnit.ShouldBeSameAs(unit);
     }
 
     [Fact]
@@ -1226,6 +1227,7 @@ public class BattleMapViewModelTests
 
         // Act & Assert
         _sut.IsRecordSheetPanelVisible.ShouldBeFalse();
+        _sut.ShownRecordSheetUnit.ShouldBeNull();
     }
 
     [Fact]

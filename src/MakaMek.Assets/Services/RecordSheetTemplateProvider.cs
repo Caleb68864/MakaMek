@@ -12,6 +12,7 @@ public sealed class RecordSheetTemplateProvider : IRecordSheetTemplateProvider
     private readonly HashSet<string> _loggedMissing = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<IResourceStreamProvider, Lazy<Task<IReadOnlyList<string>>>> _resourceIds = new();
     private readonly object _logLock = new();
+    private readonly ConcurrentDictionary<string, byte[]> _assetCache = new(StringComparer.OrdinalIgnoreCase);
 
     public RecordSheetTemplateProvider(
         IEnumerable<IResourceStreamProvider> providers,
@@ -35,6 +36,9 @@ public sealed class RecordSheetTemplateProvider : IRecordSheetTemplateProvider
             return null;
         }
 
+        if (_assetCache.TryGetValue(assetName, out var cached))
+            return new MemoryStream(cached, writable: false);
+
         foreach (var provider in _providers)
         {
             try
@@ -45,8 +49,13 @@ public sealed class RecordSheetTemplateProvider : IRecordSheetTemplateProvider
                     string.Equals(GetFileName(candidate), assetName, StringComparison.OrdinalIgnoreCase));
                 if (id == null) continue;
 
-                var stream = await provider.GetResourceStream(id);
-                if (stream != null) return stream;
+                await using var stream = await provider.GetResourceStream(id);
+                if (stream is null) continue;
+                using var buffer = new MemoryStream();
+                await stream.CopyToAsync(buffer);
+                var bytes = buffer.ToArray();
+                _assetCache[assetName] = bytes;
+                return new MemoryStream(bytes, writable: false);
             }
             catch (Exception ex)
             {

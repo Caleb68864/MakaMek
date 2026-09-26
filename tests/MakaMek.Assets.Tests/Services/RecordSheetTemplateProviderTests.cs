@@ -9,6 +9,25 @@ namespace Sanet.MakaMek.Assets.Tests.Services;
 public class RecordSheetTemplateProviderTests
 {
     [Fact]
+    public async Task CachedAssetsRemainReadableWhenProviderGoesOffline()
+    {
+        var provider = Substitute.For<IResourceStreamProvider>();
+        provider.GetAvailableResourceIds().Returns(["mek_biped_default.svg"]);
+        provider.GetResourceStream("mek_biped_default.svg").Returns(_ => new MemoryStream([1, 2, 3]));
+        var sut = new RecordSheetTemplateProvider([provider],
+            Substitute.For<ILogger<RecordSheetTemplateProvider>>());
+        await using (var first = await sut.GetTemplateAsync("mek_biped_default.svg"))
+            first!.ReadByte().ShouldBe(1);
+        provider.GetResourceStream("mek_biped_default.svg").Returns(Task.FromException<Stream?>(new IOException("offline")));
+
+        await using var cached = await sut.GetTemplateAsync("mek_biped_default.svg");
+        cached.ShouldNotBeNull();
+        cached.ReadByte().ShouldBe(1);
+        cached.CanWrite.ShouldBeFalse();
+        await provider.Received(1).GetResourceStream("mek_biped_default.svg");
+    }
+
+    [Fact]
     public async Task FetchesTemplateThroughResourceProvider()
     {
         var resourceProvider = Substitute.For<IResourceStreamProvider>();

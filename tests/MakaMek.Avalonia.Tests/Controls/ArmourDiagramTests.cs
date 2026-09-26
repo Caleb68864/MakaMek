@@ -391,6 +391,70 @@ public class ArmourDiagramTests
         }, CancellationToken.None);
     }
 
+    [Fact]
+    public async Task RenderAsync_MissingLocationRegion_ClearsPreviousSheetForFallback()
+    {
+        await Session.Dispatch(async () =>
+        {
+            var assets = Substitute.For<IRecordSheetTemplateProvider>();
+            assets.GetTemplateAsync(Arg.Any<string>()).Returns(_ => StreamFor(TemplateSvg));
+            assets.GetPipClusterAsync(Arg.Any<string>()).Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
+            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
+            var availability = new List<bool>();
+            control.TemplateAvailabilityChanged += (_, available) => availability.Add(available);
+            await control.RenderAsync(RecordSheetSamples.LightMech);
+            assets.GetTemplateAsync(Arg.Any<string>())
+                .Returns(_ => StreamFor(TemplateSvg.Replace("armorPipsCT", "missingCT")));
+
+            await control.RenderAsync(RecordSheetSamples.LightMech);
+
+            availability.ShouldBe([true, false]);
+            ((Image)((Border)((ScrollViewer)control.Content!).Content!).Child!).Source.ShouldBeNull();
+        }, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RenderAsync_LateArtworkForSameChassis_PreservesLatestDamageSnapshot()
+    {
+        await Session.Dispatch(async () =>
+        {
+            var pendingArtwork = new TaskCompletionSource<Stream?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var assets = Substitute.For<IRecordSheetTemplateProvider>();
+            assets.GetTemplateAsync(Arg.Any<string>()).Returns(_ => StreamFor(TemplateSvg));
+            assets.GetPipClusterAsync(Arg.Any<string>()).Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
+            var artwork = Substitute.For<IRecordSheetArtworkProvider>();
+            artwork.GetMechArtworkAsync("Same chassis").Returns(pendingArtwork.Task);
+            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance, artwork);
+            await control.RenderAsync(RecordSheetSamples.LightMech with { FluffArtworkName = "Same chassis" });
+            await control.RenderAsync(RecordSheetSamples.AssaultMech with { FluffArtworkName = "Same chassis" });
+            assets.ClearReceivedCalls();
+
+            pendingArtwork.SetResult(PngFor(SKColors.Red));
+            await Task.Delay(100);
+
+            await assets.Received().GetPipClusterAsync("Armor_CT_47_Humanoid.svg");
+            await assets.DidNotReceive().GetPipClusterAsync("Armor_CT_10_Humanoid.svg");
+        }, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RenderAsync_StaticSample_LeavesUnpopulatedCriticalTablesBlank()
+    {
+        await Session.Dispatch(async () =>
+        {
+            var assets = Substitute.For<IRecordSheetTemplateProvider>();
+            assets.GetTemplateAsync(Arg.Any<string>()).Returns(_ => StreamFor(TemplateSvg));
+            assets.GetPipClusterAsync(Arg.Any<string>()).Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
+            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
+
+            await control.RenderAsync(RecordSheetSamples.LightMech);
+            var png = control.RenderToPngBytes(900, 1200);
+            using var bitmap = SKBitmap.Decode(png);
+            bitmap!.Pixels.Count(pixel => pixel.Red > 120 && pixel.Red > pixel.Green * 1.5)
+                .ShouldBe(0);
+        }, CancellationToken.None);
+    }
+
     private static Stream StreamFor(string value) => new MemoryStream(Encoding.UTF8.GetBytes(value));
 
     private static Stream PngFor(SKColor color)
@@ -420,7 +484,7 @@ public class ArmourDiagramTests
         return unit;
     }
 
-    private const string TemplateSvg = """
+    private static readonly string TemplateSvg = CompleteTemplate("""
         <svg xmlns="http://www.w3.org/2000/svg" width="576" height="756" viewBox="0 0 576 756">
           <rect width="576" height="756" fill="white" stroke="black"/>
           <g id="canonArmorPips"/><g id="canonStructurePips"/>
@@ -441,7 +505,25 @@ public class ArmourDiagramTests
           <rect id="crits_HD" x="250" y="200" width="94.397" height="50.025" fill="none"/>
           <rect id="fluffSinglePilot" x="350" y="200" width="80" height="100" fill="none"/>
         </svg>
-        """;
+        """);
+
+    private static string CompleteTemplate(string source)
+    {
+        var document = System.Xml.Linq.XDocument.Parse(source);
+        var root = document.Root!;
+        var layout = new RecordSheetLayout();
+        var ids = Enum.GetValues<PartLocation>().SelectMany(location => new[]
+        {
+            layout.TemplateRegionId(location, ArmourFace.Front),
+            layout.TemplateRegionId(location, ArmourFace.Rear),
+            layout.StructureRegionId(location)
+        }).OfType<string>();
+        foreach (var id in ids)
+            if (!root.Descendants().Any(element => (string?)element.Attribute("id") == id))
+                root.Add(new System.Xml.Linq.XElement(root.Name.Namespace + "g",
+                    new System.Xml.Linq.XAttribute("id", id)));
+        return document.ToString();
+    }
 
     private static string ClusterSvg(string name)
     {

@@ -40,6 +40,7 @@ public sealed class ArmourDiagram : UserControl
     private readonly Image _image = new() { Stretch = Stretch.Uniform };
     private RecordSheetViewModel? _viewModel;
     private long _renderGeneration;
+    private RecordSheetDiagramData? _latestData;
     private bool _isTemplateAvailable;
     private string? _artworkCacheKey;
     private byte[]? _artworkBytes;
@@ -100,10 +101,15 @@ public sealed class ArmourDiagram : UserControl
         QueueViewModelRender(_viewModel?.DiagramData);
     }
 
-    public Task RenderAsync(RecordSheetDiagramData data) => RenderCoreAsync(data, Interlocked.Increment(ref _renderGeneration));
+    public Task RenderAsync(RecordSheetDiagramData data)
+    {
+        _latestData = data;
+        return RenderCoreAsync(data, Interlocked.Increment(ref _renderGeneration));
+    }
 
     private void QueueViewModelRender(RecordSheetDiagramData? data)
     {
+        _latestData = data;
         var generation = Interlocked.Increment(ref _renderGeneration);
         if (data is null)
         {
@@ -120,6 +126,7 @@ public sealed class ArmourDiagram : UserControl
 
     private async Task RenderCoreAsync(RecordSheetDiagramData? data, long generation)
     {
+        if (generation != Volatile.Read(ref _renderGeneration)) return;
         if (data is null)
         {
             _artworkCacheKey = null;
@@ -203,7 +210,7 @@ public sealed class ArmourDiagram : UserControl
                 SetImageSource(renderedBitmap);
                 ResizeImage(Bounds.Width);
                 SetTemplateAvailability(true);
-                StartArtworkLookup(data, generation);
+                StartArtworkLookup(data);
             }
             else
                 renderedBitmap.Dispose();
@@ -218,6 +225,8 @@ public sealed class ArmourDiagram : UserControl
 
     private void SetTemplateAvailability(bool isAvailable)
     {
+        if (!isAvailable)
+            SetImageSource(null);
         if (_isTemplateAvailable == isAvailable) return;
         _isTemplateAvailable = isAvailable;
         TemplateAvailabilityChanged?.Invoke(this, isAvailable);
@@ -280,7 +289,7 @@ public sealed class ArmourDiagram : UserControl
             GetAncestorTransforms(region, root) is { } transform ? new XAttribute("transform", transform) : null));
     }
 
-    private void StartArtworkLookup(RecordSheetDiagramData data, long generation)
+    private void StartArtworkLookup(RecordSheetDiagramData data)
     {
         if (OperatingSystem.IsAndroid() || _artworkProvider is null || _artworkLookupAttempted ||
             string.IsNullOrWhiteSpace(data.FluffArtworkName))
@@ -308,7 +317,7 @@ public sealed class ArmourDiagram : UserControl
             {
                 if (!string.Equals(_artworkCacheKey, mechName, StringComparison.Ordinal)) return;
                 _artworkBytes = artworkBytes;
-                _ = RenderCoreAsync(_viewModel?.DiagramData ?? data,
+                _ = RenderCoreAsync(_latestData,
                     Interlocked.Increment(ref _renderGeneration));
             });
         }
@@ -332,7 +341,7 @@ public sealed class ArmourDiagram : UserControl
                 if (region is null)
                 {
                     _logger.LogWarning("Template region {RegionId} is missing", regionId);
-                    continue;
+                    return false;
                 }
 
                 data.Armour.TryGetValue(new ArmourRegion(location, face), out var value);
@@ -376,7 +385,7 @@ public sealed class ArmourDiagram : UserControl
             if (region is null)
             {
                 _logger.LogWarning("Template region {RegionId} is missing", regionId);
-                continue;
+                return false;
             }
 
             var partData = GetPartData(data, location);
@@ -517,7 +526,7 @@ public sealed class ArmourDiagram : UserControl
         XElement? overlayLayer,
         RecordSheetDiagramData data)
     {
-        if (overlayLayer is null) return;
+        if (overlayLayer is null || data.CriticalSlots.Count == 0 && data.Locations.Count == 0) return;
         var root = document.Root;
         if (root is null) return;
 

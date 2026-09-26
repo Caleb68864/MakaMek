@@ -104,6 +104,93 @@ public class UnitRecordSheetTests
         }, CancellationToken.None);
     }
 
+    [Fact]
+    public async Task SelectedDiagram_WhenUnitBecomesUnavailable_ReturnsToTextTab()
+    {
+        await Session.Dispatch(async () =>
+        {
+            var control = CreateControl(CreateAssets(templateAvailable: true));
+            control.Unit = CreateMech();
+            var tab = control.FindControl<TabItem>("RecordSheetTab")!;
+            var tabs = control.FindControl<TabControl>("RecordSheetTabs")!;
+            await WaitForAsync(() => tab.IsVisible);
+            tabs.SelectedItem = tab;
+
+            control.Unit = null;
+
+            tab.IsVisible.ShouldBeFalse();
+            tabs.SelectedIndex.ShouldBe(0);
+        }, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ExternalSnapshotForAnotherUnit_HidesOldDiagramUntilMatchingSnapshotArrives()
+    {
+        await Session.Dispatch(async () =>
+        {
+            var control = CreateControl(CreateAssets(templateAvailable: true));
+            var first = CreateMech();
+            var second = CreateMech();
+            var snapshot = new RecordSheetViewModel();
+            snapshot.SelectUnit(first);
+            control.DiagramViewModel = snapshot;
+            control.Unit = first;
+            var tab = control.FindControl<TabItem>("RecordSheetTab")!;
+            await WaitForAsync(() => tab.IsVisible);
+
+            control.Unit = second;
+            tab.IsVisible.ShouldBeFalse();
+            snapshot.SelectUnit(second);
+            await WaitForAsync(() => tab.IsVisible);
+        }, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task Preview_SelectsAvailableDiagram_AndFallsBackToTextWhenItFails()
+    {
+        await Session.Dispatch(async () =>
+        {
+            var assets = CreateAssets(templateAvailable: true);
+            var control = CreateControl(assets);
+            control.PreferDiagram = true;
+            var snapshot = new RecordSheetViewModel();
+            var unit = CreateMech();
+            snapshot.SelectUnit(unit);
+            control.DiagramViewModel = snapshot;
+            control.Unit = unit;
+            var tab = control.FindControl<TabItem>("RecordSheetTab")!;
+            var tabs = control.FindControl<TabControl>("RecordSheetTabs")!;
+            await WaitForAsync(() => tab.IsVisible);
+            tabs.SelectedItem.ShouldBeSameAs(tab);
+
+            assets.GetTemplateAsync(Arg.Any<string>()).Returns(Task.FromResult<Stream?>(null));
+            snapshot.Refresh();
+            await WaitForAsync(() => !tab.IsVisible);
+            tabs.SelectedIndex.ShouldBe(0);
+        }, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task SwitchingUnits_ImmediatelyHidesPreviousSheetWhileNextTemplateLoads()
+    {
+        await Session.Dispatch(async () =>
+        {
+            var assets = CreateAssets(templateAvailable: true);
+            var control = CreateControl(assets);
+            control.Unit = CreateMech();
+            var tab = control.FindControl<TabItem>("RecordSheetTab")!;
+            await WaitForAsync(() => tab.IsVisible);
+            var pending = new TaskCompletionSource<Stream?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            assets.GetTemplateAsync(Arg.Any<string>()).Returns(pending.Task);
+
+            control.Unit = CreateMech();
+
+            tab.IsVisible.ShouldBeFalse();
+            pending.SetResult(StreamFor(TemplateSvg));
+            await WaitForAsync(() => tab.IsVisible);
+        }, CancellationToken.None);
+    }
+
     private static UnitRecordSheet CreateControl(IRecordSheetTemplateProvider assets) =>
         new(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
 
@@ -112,7 +199,8 @@ public class UnitRecordSheetTests
         var assets = Substitute.For<IRecordSheetTemplateProvider>();
         assets.GetTemplateAsync("mek_biped_default.svg")
             .Returns(_ => Task.FromResult<Stream?>(templateAvailable ? StreamFor(TemplateSvg) : null));
-        assets.GetPipClusterAsync(Arg.Any<string>()).Returns(_ => Task.FromResult<Stream?>(null));
+        assets.GetPipClusterAsync(Arg.Any<string>()).Returns(_ => StreamFor(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><switch><g><path d=\"M0 0h1v1z\"/></g></switch></svg>"));
         return assets;
     }
 
@@ -141,9 +229,21 @@ public class UnitRecordSheetTests
             new Leg("Right Leg", PartLocation.RightLeg, 8, 4)
         ]);
 
-    private const string TemplateSvg = """
+    private static readonly string TemplateSvg = CreateTemplate();
+
+    private static string CreateTemplate()
+    {
+        var layout = new RecordSheetLayout();
+        var ids = Enum.GetValues<PartLocation>().SelectMany(location => new[]
+        {
+            layout.TemplateRegionId(location, ArmourFace.Front),
+            layout.TemplateRegionId(location, ArmourFace.Rear),
+            layout.StructureRegionId(location)
+        }).OfType<string>();
+        return """
         <svg xmlns="http://www.w3.org/2000/svg" width="576" height="756" viewBox="0 0 576 756">
           <g id="canonArmorPips"/><g id="canonStructurePips"/>
         </svg>
-        """;
+        """.Replace("</svg>", string.Concat(ids.Select(id => $"<g id=\"{id}\"/>")) + "</svg>");
+    }
 }

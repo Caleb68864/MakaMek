@@ -830,6 +830,7 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
         NotifyPropertyChanged(nameof(AreUnitsToDeployVisible));
         NotifyPropertyChanged(nameof(IsRecordSheetButtonVisible));
         NotifyPropertyChanged(nameof(IsRecordSheetPanelVisible));
+        NotifyPropertyChanged(nameof(ShownRecordSheetUnit));
 
         RecordSheet.SelectUnit(SelectedUnit);
 
@@ -841,6 +842,10 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
 
     public IUnit? Attacker =>
         CurrentState is WeaponsAttackState weaponsAttackState ? weaponsAttackState.Attacker : null;
+
+    public IUnit? ShownRecordSheetUnit => IsRecordSheetPanelVisible ? SelectedUnit : null;
+
+    public IUnit? ShownTargetPreviewUnit => IsTargetPreviewPanelVisible ? TargetPreviewUnit : null;
 
     public IUnit? TargetPreviewUnit => _resolutionTargetUnit ??
         (CurrentState is WeaponsAttackState { CurrentStep: WeaponsAttackStep.TargetSelection } weaponsAttackState
@@ -875,6 +880,7 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
         NotifyPropertyChanged(nameof(IsTargetPreviewButtonVisible));
         NotifyPropertyChanged(nameof(IsTargetPreviewPanelVisible));
         NotifyPropertyChanged(nameof(TargetPreviewUnit));
+        NotifyPropertyChanged(nameof(ShownTargetPreviewUnit));
     }
 
     public void HandleHexSelection(Hex selectedHex)
@@ -930,6 +936,7 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
             SetProperty(ref field, value);
             NotifyPropertyChanged(nameof(IsRecordSheetButtonVisible));
             NotifyPropertyChanged(nameof(IsRecordSheetPanelVisible));
+            NotifyPropertyChanged(nameof(ShownRecordSheetUnit));
         }
     }
 

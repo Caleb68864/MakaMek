@@ -53,6 +53,15 @@ public partial class UnitRecordSheet : UserControl
     public static readonly StyledProperty<RecordSheetViewModel?> DiagramViewModelProperty =
         AvaloniaProperty.Register<UnitRecordSheet, RecordSheetViewModel?>(nameof(DiagramViewModel));
 
+    public static readonly StyledProperty<bool> PreferDiagramProperty =
+        AvaloniaProperty.Register<UnitRecordSheet, bool>(nameof(PreferDiagram));
+
+    public bool PreferDiagram
+    {
+        get => GetValue(PreferDiagramProperty);
+        set => SetValue(PreferDiagramProperty, value);
+    }
+
     private readonly IRecordSheetTemplateProvider? _recordSheetAssets;
     private readonly IRecordSheetLayout? _recordSheetLayout;
     private readonly IRecordSheetArtworkProvider? _recordSheetArtworkProvider;
@@ -163,6 +172,10 @@ public partial class UnitRecordSheet : UserControl
 
     private void OnUnitChanged()
     {
+        SetDiagramAvailability(false);
+        if (_armourDiagram is not null)
+            _armourDiagram.ViewModel = null;
+
         var pilot = Unit?.Pilot;
         HasPilot = pilot is not null;
         if (pilot is not null)
@@ -205,7 +218,7 @@ public partial class UnitRecordSheet : UserControl
     {
         if (Unit is not Mech mech)
         {
-            RecordSheetTab.IsVisible = false;
+            SetDiagramAvailability(false);
             if (_armourDiagram is not null)
                 _armourDiagram.ViewModel = null;
             return;
@@ -213,7 +226,7 @@ public partial class UnitRecordSheet : UserControl
 
         if (_recordSheetAssets is null || _recordSheetLayout is null || _diagramLogger is null)
         {
-            RecordSheetTab.IsVisible = false;
+            SetDiagramAvailability(false);
             return;
         }
 
@@ -227,7 +240,12 @@ public partial class UnitRecordSheet : UserControl
         }
 
         if (!ReferenceEquals(diagramViewModel.Unit, mech) || diagramViewModel.DiagramData is null)
+        {
+            SetDiagramAvailability(false);
+            if (_armourDiagram is not null)
+                _armourDiagram.ViewModel = null;
             return;
+        }
 
         _armourDiagram ??= CreateArmourDiagram();
         _armourDiagram.ViewModel = diagramViewModel;
@@ -243,5 +261,14 @@ public partial class UnitRecordSheet : UserControl
     }
 
     private void OnTemplateAvailabilityChanged(object? sender, bool isAvailable) =>
-        RecordSheetTab.IsVisible = Unit is Mech && isAvailable;
+        SetDiagramAvailability(Unit is Mech && isAvailable);
+
+    private void SetDiagramAvailability(bool isAvailable)
+    {
+        if (!isAvailable && ReferenceEquals(RecordSheetTabs.SelectedItem, RecordSheetTab))
+            RecordSheetTabs.SelectedIndex = 0;
+        RecordSheetTab.IsVisible = isAvailable;
+        if (isAvailable && PreferDiagram)
+            RecordSheetTabs.SelectedItem = RecordSheetTab;
+    }
 }
