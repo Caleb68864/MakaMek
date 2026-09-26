@@ -144,8 +144,14 @@ public sealed class ArmourDiagram : UserControl
 
             AddCriticalSlotSeam(root);
             AddArtworkSeam(root);
-            await AddArmourPipsAsync(document, armourPips, data);
-            await AddStructurePipsAsync(document, structurePips, data);
+            var hasAllArmourPips = await AddArmourPipsAsync(document, armourPips, data);
+            var hasAllStructurePips = await AddStructurePipsAsync(document, structurePips, data);
+            if (!hasAllArmourPips || !hasAllStructurePips)
+            {
+                if (generation == Volatile.Read(ref _renderGeneration))
+                    SetTemplateAvailability(false);
+                return;
+            }
             AddCriticalSlots(document, FindById(root, "criticalSlotOverlay"), data);
             AddFluffArtwork(document, FindById(root, "recordSheetArtworkOverlay"), data, _artworkBytes);
 
@@ -285,7 +291,7 @@ public sealed class ArmourDiagram : UserControl
         }
     }
 
-    private async Task AddArmourPipsAsync(
+    private async Task<bool> AddArmourPipsAsync(
         XDocument document, XElement overlayLayer, RecordSheetDiagramData data)
     {
         foreach (var location in Enum.GetValues<PartLocation>())
@@ -309,13 +315,29 @@ public sealed class ArmourDiagram : UserControl
                 var clusterName = _layout.ArmourClusterName(location, face, value);
                 if (clusterName is null) continue;
 
-                await AddClusterAsync(_assets.GetPipClusterAsync(clusterName), overlayLayer, regionId,
-                    clusterName, location, null, partData, data.RecentlyDamagedLocations.Contains(location));
+                var useGeneratedFallback = value > GetMaximumArmourPipValue(location, face);
+                var hasCluster = await AddClusterAsync(_assets.GetPipClusterAsync(clusterName), overlayLayer,
+                    regionId, clusterName, location, null, partData,
+                    data.RecentlyDamagedLocations.Contains(location));
+                if (hasCluster) continue;
+
+                if (useGeneratedFallback)
+                {
+                    if (!AddGeneratedFallbackPips(document, region, regionId, value,
+                        partData, data.RecentlyDamagedLocations.Contains(location), location,
+                        "armour", clusterName))
+                        return false;
+                    continue;
+                }
+
+                return false;
             }
         }
+
+        return true;
     }
 
-    private async Task AddStructurePipsAsync(
+    private async Task<bool> AddStructurePipsAsync(
         XDocument document, XElement overlayLayer, RecordSheetDiagramData data)
     {
         foreach (var location in Enum.GetValues<PartLocation>())
@@ -323,7 +345,8 @@ public sealed class ArmourDiagram : UserControl
             var regionId = _layout.StructureRegionId(location);
             var clusterName = _layout.StructureClusterName(location, data.Tonnage);
             if (regionId is null || clusterName is null) continue;
-            if (FindById(document.Root, regionId) is null)
+            var region = FindById(document.Root, regionId);
+            if (region is null)
             {
                 _logger.LogWarning("Template region {RegionId} is missing", regionId);
                 continue;
@@ -334,10 +357,133 @@ public sealed class ArmourDiagram : UserControl
                 SetValueText(document, "textIS_" + regionId["isPips".Length..],
                     partData.CurrentStructure, StatusMarker(partData));
 
-            await AddClusterAsync(_assets.GetPipClusterAsync(clusterName), overlayLayer, regionId,
-                clusterName, location, document, partData, data.RecentlyDamagedLocations.Contains(location));
+            if (data.Tonnage > 100)
+            {
+                if (!await AddClusterAsync(_assets.GetPipClusterAsync(clusterName), overlayLayer, regionId,
+                        clusterName, location, document, partData,
+                        data.RecentlyDamagedLocations.Contains(location)) &&
+                    !AddGeneratedFallbackPips(document, region, regionId,
+                        partData?.CurrentStructure ?? 0, partData,
+                        data.RecentlyDamagedLocations.Contains(location), location,
+                        "internal structure", clusterName))
+                    return false;
+                continue;
+            }
+
+            if (!await AddClusterAsync(_assets.GetPipClusterAsync(clusterName), overlayLayer, regionId,
+                    clusterName, location, document, partData, data.RecentlyDamagedLocations.Contains(location)))
+                return false;
         }
+
+        return true;
     }
+
+    private bool AddGeneratedFallbackPips(
+        XDocument document,
+        XElement region,
+        string regionId,
+        int value,
+        RecordSheetPartData? partData,
+        bool recentlyDamaged,
+        PartLocation location,
+        string pipKind,
+        string requestedCluster)
+    {
+        if (value <= 0) return true;
+
+        var root = document.Root;
+        if (root is null) return false;
+
+        var rows = region.Descendants(SvgNamespace + "rect")
+            .Where(row => TryGetNumber(row, "x", out _) && TryGetNumber(row, "y", out _) &&
+                          TryGetNumber(row, "width", out var width) && width > 0 &&
+                          TryGetNumber(row, "height", out var height) && height > 0)
+            .ToArray();
+        if (rows.Length == 0)
+        {
+            _logger.LogWarning("Cannot generate fallback pips for template region {RegionId}", regionId);
+            return false;
+        }
+
+        var remaining = value;
+        var columns = (int)Math.Ceiling((double)value / rows.Length);
+        var opacity = GetPartOpacity(partData, pipKind == "internal structure");
+        foreach (var row in rows)
+        {
+            if (remaining <= 0) break;
+            var x = ParseNumber(row, "x");
+            var y = ParseNumber(row, "y");
+            var width = ParseNumber(row, "width");
+            var height = ParseNumber(row, "height");
+            var count = Math.Min(columns, remaining);
+            var radius = Math.Min(2.2, Math.Min(height * 0.34, width / count * 0.34));
+            var parent = row.Parent ?? region;
+            var rowGroup = new XElement(SvgNamespace + "g",
+                new XAttribute("data-template-region", regionId),
+                new XAttribute("data-generated-fallback", pipKind),
+                new XAttribute("opacity", opacity),
+                recentlyDamaged ? new XAttribute("data-recent-damage", location.ToString()) : null,
+                recentlyDamaged ? new XAttribute("stroke", "#e4572e") : null,
+                recentlyDamaged ? new XAttribute("stroke-width", "1.5") : null,
+                GetAncestorTransforms(parent, root) is { } transform ? new XAttribute("transform", transform) : null);
+
+            for (var column = 0; column < count; column++)
+            {
+                var centerX = x + width * (column + 0.5) / count;
+                rowGroup.Add(new XElement(SvgNamespace + "circle",
+                    new XAttribute("data-generated-pip", value - remaining + column),
+                    new XAttribute("cx", Number(centerX)),
+                    new XAttribute("cy", Number(y + height / 2)),
+                    new XAttribute("r", Number(radius)),
+                    new XAttribute("fill", "none"),
+                    new XAttribute("stroke", recentlyDamaged ? "#e4572e" : "#000000"),
+                    new XAttribute("stroke-width", "0.5")));
+            }
+
+            // The imported MegaMek clusters live under a compensating overlay transform.
+            // Generated positions are already expressed in template coordinates, so append
+            // them at the SVG root to avoid applying that transform a second time.
+            root.Add(rowGroup);
+            remaining -= count;
+        }
+
+        if (remaining > 0)
+        {
+            _logger.LogWarning("Template region {RegionId} could not fit {Remaining} generated fallback pips",
+                regionId, remaining);
+            return false;
+        }
+
+        return true;
+    }
+
+    private static double ParseNumber(XElement element, string attribute)
+    {
+        TryGetNumber(element, attribute, out var value);
+        return value;
+    }
+
+    private static string GetPartOpacity(RecordSheetPartData? partData, bool isStructure) => partData switch
+    {
+        { IsBlownOff: true } => "0.04",
+        { IsDestroyed: true } => "0.3",
+        { MaxStructure: > 0 } when isStructure =>
+            Math.Clamp((double)partData.CurrentStructure / partData.MaxStructure, 0.15, 1)
+                .ToString("0.###", CultureInfo.InvariantCulture),
+        _ => "1"
+    };
+
+    private static int GetMaximumArmourPipValue(PartLocation location, ArmourFace face) => (location, face) switch
+    {
+        (PartLocation.Head, ArmourFace.Front) => 9,
+        (PartLocation.LeftArm or PartLocation.RightArm, ArmourFace.Front) => 34,
+        (PartLocation.LeftLeg or PartLocation.RightLeg, ArmourFace.Front) => 43,
+        (PartLocation.CenterTorso, ArmourFace.Front) => 51,
+        (PartLocation.LeftTorso or PartLocation.RightTorso, ArmourFace.Front) => 34,
+        (PartLocation.CenterTorso, ArmourFace.Rear) => 21,
+        (PartLocation.LeftTorso or PartLocation.RightTorso, ArmourFace.Rear) => 15,
+        _ => 0
+    };
 
     private void AddCriticalSlots(
         XDocument document,
@@ -502,7 +648,7 @@ public sealed class ArmourDiagram : UserControl
 
     private static string Number(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
 
-    private async Task AddClusterAsync(
+    private async Task<bool> AddClusterAsync(
         Task<Stream?> streamTask,
         XElement overlayLayer,
         string regionId,
@@ -513,7 +659,7 @@ public sealed class ArmourDiagram : UserControl
         bool recentlyDamaged)
     {
         await using var stream = await streamTask;
-        if (stream is null) return;
+        if (stream is null) return false;
 
         try
         {
@@ -522,7 +668,7 @@ public sealed class ArmourDiagram : UserControl
             if (sourceSwitch is null)
             {
                 _logger.LogWarning("Pip cluster {ClusterName} has no SVG switch layer", clusterName);
-                return;
+                return false;
             }
 
             var pipCount = sourceSwitch.Descendants(SvgNamespace + "path").Count();
@@ -548,10 +694,12 @@ public sealed class ArmourDiagram : UserControl
             if (document is not null && partData is null)
                 SetValueText(document, "textIS_" + regionId["isPips".Length..],
                     pipCount);
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Pip cluster {ClusterName} could not be composed", clusterName);
+            return false;
         }
     }
 

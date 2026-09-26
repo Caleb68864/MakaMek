@@ -35,7 +35,7 @@ public sealed class RecordSheetLayout : IRecordSheetLayout
     public string? ArmourClusterName(PartLocation location, ArmourFace face, int value)
     {
         if (value <= 0 || TemplateRegionId(location, face) is null) return null;
-        var code = PartCode(location);
+        var code = ArmourPartCode(location);
         if (code is null) return null;
 
         var rearSuffix = face == ArmourFace.Rear ? "_R" : string.Empty;
@@ -78,6 +78,19 @@ public sealed class RecordSheetLayout : IRecordSheetLayout
         PartLocation.RightArm => "RA",
         PartLocation.LeftLeg => "LL",
         PartLocation.RightLeg => "RL",
+        _ => null
+    };
+
+    private static string? ArmourPartCode(PartLocation location) => location switch
+    {
+        PartLocation.Head => "Head",
+        PartLocation.CenterTorso => "CT",
+        PartLocation.LeftTorso => "LT",
+        PartLocation.RightTorso => "RT",
+        PartLocation.LeftArm => "LArm",
+        PartLocation.RightArm => "RArm",
+        PartLocation.LeftLeg => "LLeg",
+        PartLocation.RightLeg => "RLeg",
         _ => null
     };
 }

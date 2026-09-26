@@ -9,10 +9,12 @@ public class RecordSheetLayoutTests
     private readonly RecordSheetLayout _sut = new();
 
     [Theory]
-    [InlineData(PartLocation.Head, ArmourFace.Front, "armorPipsHD", "Armor_HD_8_Humanoid.svg")]
+    [InlineData(PartLocation.Head, ArmourFace.Front, "armorPipsHD", "Armor_Head_8_Humanoid.svg")]
     [InlineData(PartLocation.CenterTorso, ArmourFace.Front, "armorPipsCT", "Armor_CT_8_Humanoid.svg")]
-    [InlineData(PartLocation.LeftArm, ArmourFace.Front, "armorPipsLA", "Armor_LA_8_Humanoid.svg")]
-    [InlineData(PartLocation.RightLeg, ArmourFace.Front, "armorPipsRL", "Armor_RL_8_Humanoid.svg")]
+    [InlineData(PartLocation.LeftArm, ArmourFace.Front, "armorPipsLA", "Armor_LArm_8_Humanoid.svg")]
+    [InlineData(PartLocation.RightArm, ArmourFace.Front, "armorPipsRA", "Armor_RArm_8_Humanoid.svg")]
+    [InlineData(PartLocation.LeftLeg, ArmourFace.Front, "armorPipsLL", "Armor_LLeg_8_Humanoid.svg")]
+    [InlineData(PartLocation.RightLeg, ArmourFace.Front, "armorPipsRL", "Armor_RLeg_8_Humanoid.svg")]
     [InlineData(PartLocation.CenterTorso, ArmourFace.Rear, "armorPipsCTR", "Armor_CT_R_8_Humanoid.svg")]
     [InlineData(PartLocation.LeftTorso, ArmourFace.Rear, "armorPipsLTR", "Armor_LT_R_8_Humanoid.svg")]
     [InlineData(PartLocation.RightTorso, ArmourFace.Rear, "armorPipsRTR", "Armor_RT_R_8_Humanoid.svg")]

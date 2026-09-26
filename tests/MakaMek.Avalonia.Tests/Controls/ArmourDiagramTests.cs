@@ -89,6 +89,59 @@ public class ArmourDiagramTests
     }
 
     [Fact]
+    public async Task RenderAsync_ArmourValueBeyondPipCoverage_GeneratesFallbackAndKeepsDiagramAvailable()
+    {
+        await Session.Dispatch(async () =>
+        {
+            var assets = Substitute.For<IRecordSheetTemplateProvider>();
+            assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(TemplateSvg));
+            assets.GetPipClusterAsync(Arg.Any<string>()).Returns(call =>
+                call.Arg<string>() == "Armor_CT_52_Humanoid.svg"
+                    ? Task.FromResult<Stream?>(null)
+                    : Task.FromResult<Stream?>(StreamFor(ClusterSvg(call.Arg<string>()))));
+            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
+            var availability = new List<bool>();
+            control.TemplateAvailabilityChanged += (_, isAvailable) => availability.Add(isAvailable);
+            control.Measure(new Size(900, 1200));
+            control.Arrange(new Rect(0, 0, 900, 1200));
+
+            await control.RenderAsync(RecordSheetDiagramData.Create(20,
+                [new KeyValuePair<ArmourRegion, int>(new(PartLocation.CenterTorso, ArmourFace.Front), 52)]));
+
+            availability.ShouldContain(true);
+            await assets.Received().GetPipClusterAsync("Armor_CT_52_Humanoid.svg");
+        }, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RenderAsync_MissingSupportedPip_MarksDiagramUnavailableForTextFallback()
+    {
+        await Session.Dispatch(async () =>
+        {
+            var assets = Substitute.For<IRecordSheetTemplateProvider>();
+            assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(TemplateSvg));
+            var clusterAvailable = true;
+            assets.GetPipClusterAsync(Arg.Any<string>()).Returns(call =>
+                clusterAvailable
+                    ? Task.FromResult<Stream?>(StreamFor(ClusterSvg(call.Arg<string>())))
+                    : Task.FromResult<Stream?>(null));
+            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
+            var availability = new List<bool>();
+            control.TemplateAvailabilityChanged += (_, isAvailable) => availability.Add(isAvailable);
+            control.Measure(new Size(900, 1200));
+            control.Arrange(new Rect(0, 0, 900, 1200));
+
+            var data = RecordSheetDiagramData.Create(20,
+                [new KeyValuePair<ArmourRegion, int>(new(PartLocation.CenterTorso, ArmourFace.Front), 10)]);
+            await control.RenderAsync(data);
+            clusterAvailable = false;
+            await control.RenderAsync(data);
+
+            availability.ShouldBe([true, false]);
+        }, CancellationToken.None);
+    }
+
+    [Fact]
     public async Task RenderAsync_WhenArtworkFetchFails_KeepsTheBaselineSheetAvailable()
     {
         await Session.Dispatch(async () =>
@@ -305,10 +358,18 @@ public class ArmourDiagramTests
         <svg xmlns="http://www.w3.org/2000/svg" width="576" height="756" viewBox="0 0 576 756">
           <rect width="576" height="756" fill="white" stroke="black"/>
           <g id="canonArmorPips"/><g id="canonStructurePips"/>
-          <g id="armorPipsCT"/><text id="textArmor_CT" x="10" y="20"/>
+          <g id="armorPipsCT">
+            <rect id="armorCTRow00" x="0" y="0" width="33" height="6"/>
+            <rect id="armorCTRow01" x="0" y="5.3" width="33" height="6"/>
+            <rect id="armorCTRow02" x="0" y="10.6" width="33" height="6"/>
+          </g><text id="textArmor_CT" x="10" y="20"/>
           <g id="armorPipsCTR"/><text id="textArmor_CTR" x="10" y="40"/>
           <g id="armorPipsLA"/><text id="textArmor_LA" x="10" y="80"/>
-          <g id="isPipsCT"/><text id="textIS_CT" x="10" y="60"/>
+          <g id="isPipsCT">
+            <rect id="isCTRow00" x="0" y="0" width="22" height="5"/>
+            <rect id="isCTRow01" x="0" y="4.7" width="22" height="5"/>
+            <rect id="isCTRow02" x="0" y="9.4" width="22" height="5"/>
+          </g><text id="textIS_CT" x="10" y="60"/>
           <g id="isPipsLA"/><text id="textIS_LA" x="10" y="100"/>
           <rect id="crits_CT" x="120" y="200" width="94.397" height="103.5" fill="none"/>
           <rect id="crits_HD" x="250" y="200" width="94.397" height="50.025" fill="none"/>
