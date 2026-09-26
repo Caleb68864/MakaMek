@@ -252,6 +252,35 @@ public class ArmourDiagramTests
     }
 
     [Fact]
+    public async Task ViewModelBinding_DamageRefresh_DoesNotRenderInsideTheChangeNotification()
+    {
+        await Session.Dispatch(async () =>
+        {
+            var templateCalls = 0;
+            var assets = Substitute.For<IRecordSheetTemplateProvider>();
+            assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ =>
+            {
+                Interlocked.Increment(ref templateCalls);
+                return StreamFor(TemplateSvg);
+            });
+            assets.GetPipClusterAsync(Arg.Any<string>())
+                .Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
+            var viewModel = new RecordSheetViewModel();
+            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance)
+            {
+                ViewModel = viewModel
+            };
+            control.Measure(new Size(900, 1200));
+            control.Arrange(new Rect(0, 0, 900, 1200));
+
+            viewModel.SelectUnit(CreateUnit(10));
+            Volatile.Read(ref templateCalls).ShouldBe(0);
+            await Task.Delay(50);
+            Volatile.Read(ref templateCalls).ShouldBe(1);
+        }, CancellationToken.None);
+    }
+
+    [Fact]
     public async Task ViewModelBinding_WhenUnitIsSwitchedQuickly_OnlyLatestRenderIsDisplayed()
     {
         await Session.Dispatch(async () =>
@@ -274,6 +303,8 @@ public class ArmourDiagramTests
             control.Measure(new Size(900, 1200));
             control.Arrange(new Rect(0, 0, 900, 1200));
 
+            await Task.Delay(20);
+            Volatile.Read(ref templateCalls).ShouldBe(1);
             viewModel.SelectUnit(CreateUnit(47));
             await Task.Delay(50);
             var latestRender = control.RenderToPngBytes(900, 1200);

@@ -97,10 +97,26 @@ public sealed class ArmourDiagram : UserControl
         if (_viewModel is not null)
             _viewModel.PropertyChanged += OnViewModelPropertyChanged;
 
-        _ = RenderCoreAsync(_viewModel?.DiagramData, Interlocked.Increment(ref _renderGeneration));
+        QueueViewModelRender(_viewModel?.DiagramData);
     }
 
     public Task RenderAsync(RecordSheetDiagramData data) => RenderCoreAsync(data, Interlocked.Increment(ref _renderGeneration));
+
+    private void QueueViewModelRender(RecordSheetDiagramData? data)
+    {
+        var generation = Interlocked.Increment(ref _renderGeneration);
+        if (data is null)
+        {
+            _ = RenderCoreAsync(null, generation);
+            return;
+        }
+
+        Dispatcher.Post(() =>
+        {
+            if (generation == Volatile.Read(ref _renderGeneration))
+                _ = RenderCoreAsync(data, generation);
+        }, DispatcherPriority.Background);
+    }
 
     private async Task RenderCoreAsync(RecordSheetDiagramData? data, long generation)
     {
@@ -230,7 +246,7 @@ public sealed class ArmourDiagram : UserControl
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(RecordSheetViewModel.DiagramData))
-            _ = RenderCoreAsync(_viewModel?.DiagramData, Interlocked.Increment(ref _renderGeneration));
+            QueueViewModelRender(_viewModel?.DiagramData);
     }
 
     private static void AddArtworkSeam(XElement root)
