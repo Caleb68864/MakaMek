@@ -45,6 +45,20 @@ public class RecordSheetLayoutTests
         _sut.StructureClusterName(location, 20).ShouldBe(expected);
     }
 
+    [Theory]
+    [InlineData(PartLocation.Head, "crits_HD")]
+    [InlineData(PartLocation.CenterTorso, "crits_CT")]
+    [InlineData(PartLocation.LeftTorso, "crits_LT")]
+    [InlineData(PartLocation.RightTorso, "crits_RT")]
+    [InlineData(PartLocation.LeftArm, "crits_LA")]
+    [InlineData(PartLocation.RightArm, "crits_RA")]
+    [InlineData(PartLocation.LeftLeg, "crits_LL")]
+    [InlineData(PartLocation.RightLeg, "crits_RL")]
+    public void CriticalSlotRegionsMapToTheTemplate(PartLocation location, string expected)
+    {
+        _sut.CriticalSlotRegionId(location).ShouldBe(expected);
+    }
+
     [Fact]
     public void ZeroArmourHasNoCluster()
     {

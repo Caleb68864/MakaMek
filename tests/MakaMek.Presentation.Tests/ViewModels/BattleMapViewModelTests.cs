@@ -2142,10 +2142,15 @@ public class BattleMapViewModelTests
             WeaponData = weaponTargetData1.Weapon,
             ResolutionData = new AttackResolutionData(
                 ToHitNumber: 7,
-                AttackDirection: HitDirection.Front,
                 AttackRoll: [new DiceResult(6)],
                 IsHit: true,
-                ExternalHeat: 0),
+                AttackDirection: HitDirection.Front,
+                ExternalHeat: 0,
+                HitLocationsData: new AttackHitLocationsData(
+                    [new LocationHitData(
+                        [new LocationDamageData(PartLocation.CenterTorso, 2, 0, false)],
+                        [], [], PartLocation.CenterTorso)],
+                    2, [], 0)),
             GameOriginId = Guid.NewGuid()
         };
         
@@ -2154,11 +2159,27 @@ public class BattleMapViewModelTests
         
         // Assert
         _sut.WeaponAttacks.Count.ShouldBe(1); // Only one attack should remain
+        _sut.TargetPreviewUnit.ShouldBeSameAs(target);
+        _sut.IsTargetPreviewPanelVisible.ShouldBeTrue();
+        _sut.RecordSheet.DiagramData!.RecentlyDamagedLocations.ShouldContain(PartLocation.CenterTorso);
+        _sut.ToggleTargetPreview();
+        _sut.IsTargetPreviewPanelVisible.ShouldBeFalse();
         
         // The remaining attack should be for weapon2
         var remainingAttack = _sut.WeaponAttacks.First();
         remainingAttack.Weapon.ShouldBe(weapon2);
         remainingAttack.TargetId.ShouldBe(target.Id);
+
+        game.HandleCommand(new ChangePhaseCommand
+        {
+            GameOriginId = Guid.NewGuid(),
+            Phase = PhaseNames.End
+        });
+
+        _sut.IsTargetPreviewPanelVisible.ShouldBeFalse();
+        _sut.RecordSheet.DiagramData.ShouldBeNull();
+        _sut.RecordSheet.SelectUnit(target);
+        _sut.RecordSheet.DiagramData!.RecentlyDamagedLocations.ShouldBeEmpty();
     }
     
     [Fact]

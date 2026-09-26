@@ -8,6 +8,7 @@ public sealed class RecordSheetViewModel : BaseViewModel
 {
     private IUnit? _unit;
     private RecordSheetDiagramData? _diagramData;
+    private readonly HashSet<PartLocation> _recentDamageLocations = [];
 
     public IUnit? Unit
     {
@@ -28,5 +29,37 @@ public sealed class RecordSheetViewModel : BaseViewModel
     }
 
     /// <summary>Refreshes the projection after the game applies a state-changing command.</summary>
-    public void Refresh() => DiagramData = Unit is null ? null : RecordSheetDiagramData.FromUnit(Unit);
+    public void AddRecentDamage(IEnumerable<PartLocation> locations)
+    {
+        ArgumentNullException.ThrowIfNull(locations);
+        var changed = false;
+        foreach (var location in locations)
+            changed |= _recentDamageLocations.Add(location);
+        if (!changed) return;
+        Refresh();
+    }
+
+    public void SetRecentDamage(IEnumerable<PartLocation> locations)
+    {
+        ArgumentNullException.ThrowIfNull(locations);
+        var replacement = locations.ToHashSet();
+        if (_recentDamageLocations.SetEquals(replacement)) return;
+        _recentDamageLocations.Clear();
+        _recentDamageLocations.UnionWith(replacement);
+        Refresh();
+    }
+
+    public void ClearRecentDamage()
+    {
+        if (_recentDamageLocations.Count == 0) return;
+        _recentDamageLocations.Clear();
+        Refresh();
+    }
+
+    public void Refresh() => DiagramData = Unit is null
+        ? null
+        : RecordSheetDiagramData.FromUnit(Unit) with
+        {
+            RecentDamageLocations = new HashSet<PartLocation>(_recentDamageLocations)
+        };
 }

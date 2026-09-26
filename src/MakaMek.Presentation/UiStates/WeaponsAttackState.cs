@@ -23,6 +23,16 @@ public class WeaponsAttackState : IUiState
 
     public WeaponsAttackStep CurrentStep { get; private set; } = WeaponsAttackStep.SelectingUnit;
 
+    public bool IsTargetPreviewExpanded { get; private set; }
+
+    public void ToggleTargetPreview()
+    {
+        if (CurrentStep != WeaponsAttackStep.TargetSelection || SelectedTarget == null) return;
+
+        IsTargetPreviewExpanded = !IsTargetPreviewExpanded;
+        _viewModel.NotifyTargetPreviewChanged();
+    }
+
     public string ActionLabel => CurrentStep switch
     {
         WeaponsAttackStep.SelectingUnit => _viewModel.LocalizationService.GetString("Action_SelectUnitToFire"),
@@ -90,6 +100,7 @@ public class WeaponsAttackState : IUiState
                     if (value.HasDeclaredWeaponAttack) return;
 
                     Attacker = value;
+                    IsTargetPreviewExpanded = false;
                     CreateWeaponViewModels();
                     CurrentStep = WeaponsAttackStep.ActionSelection;
 
@@ -224,6 +235,7 @@ public class WeaponsAttackState : IUiState
         lock (_stateLock)
         {
             SelectedTarget = null;
+            IsTargetPreviewExpanded = false;
             Attacker?.WeaponAttackState.ClearAllWeaponTargets();
             Attacker = null;
             _weaponRanges.Clear();
@@ -254,6 +266,7 @@ public class WeaponsAttackState : IUiState
             // Clear target and weapon selections
             Attacker?.WeaponAttackState.ClearAllWeaponTargets();
             SelectedTarget = null;
+            IsTargetPreviewExpanded = false;
             _viewModel.IsWeaponSelectionVisible = false;
 
             // Return to an action selection step

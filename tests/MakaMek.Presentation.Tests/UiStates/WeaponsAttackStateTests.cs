@@ -219,6 +219,76 @@ public class WeaponsAttackStateTests
     }
 
     [Fact]
+    public void TargetPreview_IsOptInAndCanBeDismissedWithoutChangingAttackDeclaration()
+    {
+        _battleMapViewModel.IsTargetPreviewButtonVisible.ShouldBeFalse();
+        _battleMapViewModel.IsTargetPreviewPanelVisible.ShouldBeFalse();
+
+        SetPhase(PhaseNames.WeaponsAttack);
+        SetActivePlayer();
+        var attacker = _battleMapViewModel.Units.First(u => u.Owner!.Id == _player.Id);
+        attacker.Deploy(new HexPosition(new HexCoordinates(1, 1), HexDirection.Bottom), null);
+        attacker.Parts[PartLocation.LeftTorso].TryAddComponent(new MediumLaser(), [1]).ShouldBeTrue();
+        attacker.AssignPilot(_pilot);
+        var target = _battleMapViewModel.Units.First(u => u.Owner!.Id != _player.Id);
+        var targetPosition = new HexPosition(new HexCoordinates(2, 1), HexDirection.Bottom);
+        target.Deploy(targetPosition, null);
+
+        _sut.HandleUnitSelectionFromList(attacker);
+        _sut.GetAvailableActions().First(a => a.Label == "Select Target").OnExecute();
+        _sut.HandleHexSelection(new Hex(targetPosition.Coordinates));
+
+        _battleMapViewModel.IsTargetPreviewButtonVisible.ShouldBeTrue();
+        _battleMapViewModel.IsTargetPreviewPanelVisible.ShouldBeFalse();
+        _battleMapViewModel.TargetPreviewUnit.ShouldBe(target);
+        var selectedWeaponTargets = attacker.WeaponAttackState.WeaponTargets.ToDictionary();
+        var selectionVisible = _battleMapViewModel.IsWeaponSelectionVisible;
+
+        _battleMapViewModel.ToggleTargetPreviewCommand.Execute(null);
+        _battleMapViewModel.IsTargetPreviewPanelVisible.ShouldBeTrue();
+        _battleMapViewModel.RecordSheet.Unit.ShouldBeSameAs(target);
+        _battleMapViewModel.ToggleTargetPreviewCommand.Execute(null);
+
+        _battleMapViewModel.IsTargetPreviewPanelVisible.ShouldBeFalse();
+        _sut.SelectedTarget.ShouldBe(target);
+        attacker.WeaponAttackState.WeaponTargets.ShouldBe(selectedWeaponTargets);
+        _battleMapViewModel.IsWeaponSelectionVisible.ShouldBe(selectionVisible);
+
+        _sut.HandleHexSelection(new Hex(new HexCoordinates(10, 10)));
+        _battleMapViewModel.IsTargetPreviewButtonVisible.ShouldBeFalse();
+        var nextAttacker = _battleMapViewModel.Units.First(u => u.Owner!.Id == _player.Id && u != attacker);
+        _sut.HandleUnitSelectionFromList(nextAttacker);
+        _battleMapViewModel.IsTargetPreviewPanelVisible.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TargetPreview_TracksTargetChangesWhileOpen()
+    {
+        SetPhase(PhaseNames.WeaponsAttack);
+        SetActivePlayer();
+        var attacker = _battleMapViewModel.Units.First(u => u.Owner!.Id == _player.Id);
+        attacker.Deploy(new HexPosition(new HexCoordinates(1, 1), HexDirection.Bottom), null);
+        attacker.Parts[PartLocation.LeftTorso].TryAddComponent(new MediumLaser(), [1]).ShouldBeTrue();
+        attacker.AssignPilot(_pilot);
+        var targets = _battleMapViewModel.Units.Where(u => u.Owner!.Id != _player.Id).Take(2).ToArray();
+        var firstPosition = new HexPosition(new HexCoordinates(2, 1), HexDirection.Bottom);
+        var secondPosition = new HexPosition(new HexCoordinates(1, 2), HexDirection.Bottom);
+        targets[0].Deploy(firstPosition, null);
+        targets[1].Deploy(secondPosition, null);
+
+        _sut.HandleUnitSelectionFromList(attacker);
+        _sut.GetAvailableActions().First(a => a.Label == "Select Target").OnExecute();
+        _sut.HandleHexSelection(new Hex(firstPosition.Coordinates));
+        _battleMapViewModel.ToggleTargetPreviewCommand.Execute(null);
+
+        _sut.HandleHexSelection(new Hex(secondPosition.Coordinates));
+
+        _battleMapViewModel.IsTargetPreviewPanelVisible.ShouldBeTrue();
+        _battleMapViewModel.TargetPreviewUnit.ShouldBe(targets[1]);
+        _battleMapViewModel.RecordSheet.Unit.ShouldBeSameAs(targets[1]);
+    }
+
+    [Fact]
     public void HandleUnitSelection_TransitionsToActionSelection()
     {
         // Act

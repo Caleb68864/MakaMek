@@ -14,6 +14,8 @@ public interface IRecordSheetLayout
 
     string? StructureRegionId(PartLocation location);
 
+    string? CriticalSlotRegionId(PartLocation location);
+
     string? ArmourClusterName(PartLocation location, ArmourFace face, int value);
 
     string? StructureClusterName(PartLocation location, int tonnage);

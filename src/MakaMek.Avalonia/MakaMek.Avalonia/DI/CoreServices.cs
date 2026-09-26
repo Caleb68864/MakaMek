@@ -70,6 +70,20 @@ public static class CoreServices
             return new RecordSheetTemplateProvider([templates, pipClusters], logger);
         });
 
+        services.AddSingleton<IRecordSheetArtworkProvider>(sp =>
+        {
+            var localRoot = Environment.GetEnvironmentVariable("MAKAMEK_MM_DATA_ROOT");
+            if (!string.IsNullOrWhiteSpace(localRoot))
+                return RecordSheetArtworkProvider.FromLocalCheckout(localRoot);
+
+            var fluffUrl = "https://api.github.com/repos/MegaMek/mm-data/contents/data/images/fluff";
+            var cachingService = sp.GetRequiredService<IFileCachingService>();
+            var logger = sp.GetRequiredService<ILogger<GitHubResourceStreamProvider>>();
+            var mechFluff = new GitHubResourceStreamProvider(
+                "png", fluffUrl, "mech", cachingService, logger);
+            return new RecordSheetArtworkProvider([mechFluff]);
+        });
+
         // Unit caching service — providers are resolved lazily from IAssetProviderConfigurationProvider
         // on first cache access, so users can add/remove/toggle providers in Settings and the
         // changes take effect on the next asset load without a restart.

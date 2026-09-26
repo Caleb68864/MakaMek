@@ -11,6 +11,7 @@ using Sanet.MakaMek.Avalonia.Controls.Extensions;
 using Sanet.MakaMek.Assets.Services;
 using Sanet.MakaMek.Core.Models.Units;
 using Sanet.MakaMek.Core.Models.Units.Mechs;
+using Sanet.MakaMek.Core.Models.Units.Components.Internal;
 using Sanet.MakaMek.Presentation.RecordSheet;
 using SkiaSharp;
 
@@ -63,6 +64,59 @@ public class ArmourDiagramTests
     }
 
     [Fact]
+    public async Task RenderAsync_WithOptionalArtwork_ComposesItWithoutBlockingTheSheet()
+    {
+        await Session.Dispatch(async () =>
+        {
+            var assets = Substitute.For<IRecordSheetTemplateProvider>();
+            assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(TemplateSvg));
+            assets.GetPipClusterAsync(Arg.Any<string>()).Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
+            var artwork = Substitute.For<IRecordSheetArtworkProvider>();
+            artwork.GetMechArtworkAsync("TestMech TestModel").Returns(_ => Task.FromResult<Stream?>(PngFor(SKColors.Red)));
+            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance, artwork);
+            control.Measure(new Size(900, 1200));
+            control.Arrange(new Rect(0, 0, 900, 1200));
+            var data = RecordSheetSamples.LightMech with { FluffArtworkName = "TestMech TestModel" };
+
+            await control.RenderAsync(data);
+            var baseline = control.RenderToPngBytes(900, 1200);
+            await Task.Delay(100);
+
+            var withArtwork = control.RenderToPngBytes(900, 1200);
+            withArtwork.SequenceEqual(baseline).ShouldBeFalse();
+            await artwork.Received(1).GetMechArtworkAsync("TestMech TestModel");
+        }, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RenderAsync_WhenArtworkFetchFails_KeepsTheBaselineSheetAvailable()
+    {
+        await Session.Dispatch(async () =>
+        {
+            var pendingArtwork = new TaskCompletionSource<Stream?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var assets = Substitute.For<IRecordSheetTemplateProvider>();
+            assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(TemplateSvg));
+            assets.GetPipClusterAsync(Arg.Any<string>()).Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
+            var artwork = Substitute.For<IRecordSheetArtworkProvider>();
+            artwork.GetMechArtworkAsync("TestMech TestModel").Returns(_ => pendingArtwork.Task);
+            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance, artwork);
+            control.Measure(new Size(900, 1200));
+            control.Arrange(new Rect(0, 0, 900, 1200));
+
+            await control.RenderAsync(RecordSheetSamples.LightMech with { FluffArtworkName = "TestMech TestModel" });
+            var baseline = control.RenderToPngBytes(900, 1200);
+            using (var bitmap = SKBitmap.Decode(baseline))
+                bitmap!.Pixels.Count(pixel => pixel != SKColors.White).ShouldBeGreaterThan(100);
+
+            pendingArtwork.SetException(new IOException("artwork source unavailable"));
+            await Task.Delay(50);
+
+            control.RenderToPngBytes(900, 1200).SequenceEqual(baseline).ShouldBeTrue();
+            await artwork.Received(1).GetMechArtworkAsync("TestMech TestModel");
+        }, CancellationToken.None);
+    }
+
+    [Fact]
     public async Task ViewModelBinding_WhenUnitIsDamaged_RendersUpdatedValuesWithoutReselection()
     {
         await Session.Dispatch(async () =>
@@ -97,6 +151,15 @@ public class ArmourDiagramTests
             afterDamage.SequenceEqual(beforeDamage).ShouldBeFalse();
             viewModel.Unit.ShouldBeSameAs(unit);
             viewModel.DiagramData!.Armour[new(PartLocation.CenterTorso, ArmourFace.Front)].ShouldBe(6);
+
+            viewModel.AddRecentDamage([PartLocation.CenterTorso]);
+            await Task.Delay(50);
+            var recentDamage = control.RenderToPngBytes(900, 1200);
+            recentDamage.SequenceEqual(afterDamage).ShouldBeFalse();
+
+            viewModel.ClearRecentDamage();
+            await Task.Delay(50);
+            control.RenderToPngBytes(900, 1200).SequenceEqual(afterDamage).ShouldBeTrue();
         }, CancellationToken.None);
     }
 
@@ -165,7 +228,59 @@ public class ArmourDiagramTests
         }, CancellationToken.None);
     }
 
+    [Fact]
+    public async Task RenderAsync_CriticalSlotsDistinguishEmptyHitDestroyedAndMissingLocations()
+    {
+        await Session.Dispatch(async () =>
+        {
+            var centerTorso = new CenterTorso("Center Torso", 10, 3, 6);
+            centerTorso.Components.OfType<Gyro>().ShouldHaveSingleItem();
+            var unit = new Mech("Test", "Slots", 20, [centerTorso, new Head("Head", 8, 3)]);
+            var viewModel = new RecordSheetViewModel();
+            viewModel.SelectUnit(unit);
+            var assets = Substitute.For<IRecordSheetTemplateProvider>();
+            assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(TemplateSvg));
+            assets.GetPipClusterAsync(Arg.Any<string>())
+                .Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
+            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance)
+            {
+                ViewModel = viewModel
+            };
+            control.Measure(new Size(900, 1200));
+            control.Arrange(new Rect(0, 0, 900, 1200));
+            await Task.Delay(50);
+            var intactAndEmptySlots = control.RenderToPngBytes(900, 1200);
+
+            centerTorso.CriticalHit(3);
+            viewModel.Refresh();
+            await Task.Delay(50);
+            var hitSlot = control.RenderToPngBytes(900, 1200);
+            hitSlot.SequenceEqual(intactAndEmptySlots).ShouldBeFalse();
+
+            centerTorso.CriticalHit(4);
+            viewModel.Refresh();
+            await Task.Delay(50);
+            var destroyedComponent = control.RenderToPngBytes(900, 1200);
+            destroyedComponent.SequenceEqual(hitSlot).ShouldBeFalse();
+
+            var partialMech = new Mech("Test", "Partial", 20,
+                [new CenterTorso("Center Torso", 10, 3, 6)]);
+            viewModel.SelectUnit(partialMech);
+            await Task.Delay(50);
+            var missingHead = control.RenderToPngBytes(900, 1200);
+            missingHead.SequenceEqual(intactAndEmptySlots).ShouldBeFalse();
+        }, CancellationToken.None);
+    }
+
     private static Stream StreamFor(string value) => new MemoryStream(Encoding.UTF8.GetBytes(value));
+
+    private static Stream PngFor(SKColor color)
+    {
+        using var bitmap = new SKBitmap(8, 8);
+        bitmap.Erase(color);
+        using var image = SKImage.FromBitmap(bitmap);
+        return new MemoryStream(image.Encode(SKEncodedImageFormat.Png, 100).ToArray());
+    }
 
     private static IUnit CreateUnit(int centerTorsoArmor)
     {
@@ -195,6 +310,9 @@ public class ArmourDiagramTests
           <g id="armorPipsLA"/><text id="textArmor_LA" x="10" y="80"/>
           <g id="isPipsCT"/><text id="textIS_CT" x="10" y="60"/>
           <g id="isPipsLA"/><text id="textIS_LA" x="10" y="100"/>
+          <rect id="crits_CT" x="120" y="200" width="94.397" height="103.5" fill="none"/>
+          <rect id="crits_HD" x="250" y="200" width="94.397" height="50.025" fill="none"/>
+          <rect id="fluffSinglePilot" x="350" y="200" width="80" height="100" fill="none"/>
         </svg>
         """;
 

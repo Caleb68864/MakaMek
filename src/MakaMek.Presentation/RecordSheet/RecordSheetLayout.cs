@@ -48,6 +48,19 @@ public sealed class RecordSheetLayout : IRecordSheetLayout
         return code is null ? null : $"isPips{code}";
     }
 
+    public string? CriticalSlotRegionId(PartLocation location) => location switch
+    {
+        PartLocation.Head => "crits_HD",
+        PartLocation.CenterTorso => "crits_CT",
+        PartLocation.LeftTorso => "crits_LT",
+        PartLocation.RightTorso => "crits_RT",
+        PartLocation.LeftArm => "crits_LA",
+        PartLocation.RightArm => "crits_RA",
+        PartLocation.LeftLeg => "crits_LL",
+        PartLocation.RightLeg => "crits_RL",
+        _ => null
+    };
+
     /// <summary>The structure pip library is keyed by chassis tonnage, not structure points.</summary>
     public string? StructureClusterName(PartLocation location, int tonnage)
     {

@@ -55,6 +55,7 @@ public partial class UnitRecordSheet : UserControl
 
     private readonly IRecordSheetTemplateProvider? _recordSheetAssets;
     private readonly IRecordSheetLayout? _recordSheetLayout;
+    private readonly IRecordSheetArtworkProvider? _recordSheetArtworkProvider;
     private readonly ILogger<ArmourDiagram>? _diagramLogger;
     private RecordSheetViewModel? _localDiagramViewModel;
     private RecordSheetViewModel? _observedDiagramViewModel;
@@ -132,6 +133,7 @@ public partial class UnitRecordSheet : UserControl
         {
             _recordSheetAssets = services.GetService<IRecordSheetTemplateProvider>();
             _recordSheetLayout = services.GetService<IRecordSheetLayout>();
+            _recordSheetArtworkProvider = services.GetService<IRecordSheetArtworkProvider>();
             _diagramLogger = services.GetService<ILogger<ArmourDiagram>>();
         }
 
@@ -142,10 +144,20 @@ public partial class UnitRecordSheet : UserControl
         IRecordSheetTemplateProvider? recordSheetAssets,
         IRecordSheetLayout? recordSheetLayout,
         ILogger<ArmourDiagram>? diagramLogger)
+        : this(recordSheetAssets, recordSheetLayout, diagramLogger, null)
+    {
+    }
+
+    public UnitRecordSheet(
+        IRecordSheetTemplateProvider? recordSheetAssets,
+        IRecordSheetLayout? recordSheetLayout,
+        ILogger<ArmourDiagram>? diagramLogger,
+        IRecordSheetArtworkProvider? recordSheetArtworkProvider)
     {
         _recordSheetAssets = recordSheetAssets;
         _recordSheetLayout = recordSheetLayout;
         _diagramLogger = diagramLogger;
+        _recordSheetArtworkProvider = recordSheetArtworkProvider;
         InitializeComponent();
     }
 
@@ -223,7 +235,8 @@ public partial class UnitRecordSheet : UserControl
 
     private ArmourDiagram CreateArmourDiagram()
     {
-        var diagram = new ArmourDiagram(_recordSheetAssets!, _recordSheetLayout!, _diagramLogger!);
+        var diagram = new ArmourDiagram(
+            _recordSheetAssets!, _recordSheetLayout!, _diagramLogger!, _recordSheetArtworkProvider);
         diagram.TemplateAvailabilityChanged += OnTemplateAvailabilityChanged;
         RecordSheetDiagramHost.Children.Add(diagram);
         return diagram;

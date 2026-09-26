@@ -10,6 +10,7 @@ using Sanet.MakaMek.Assets.Services;
 using Sanet.MakaMek.Core.Data.Game.Commands;
 using Sanet.MakaMek.Core.Data.Game.Commands.Client;
 using Sanet.MakaMek.Core.Data.Game.Commands.Server;
+using Sanet.MakaMek.Core.Data.Game;
 using Sanet.MakaMek.Core.Models.Game;
 using Sanet.MakaMek.Core.Models.Game.Phases;
 using Sanet.MakaMek.Core.Models.Game.Players;
@@ -52,6 +53,9 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
     private readonly IFileService? _fileService;
     private List<UiEventViewModel> _selectedUnitEvents = [];
     private readonly PropertyChangedEventHandler? _hexConfigurationChangedHandler;
+    private IUnit? _resolutionTargetUnit;
+    private readonly Dictionary<Guid, HashSet<PartLocation>> _resolutionDamageByTarget = [];
+    private PhaseNames? _observedPhase;
 
     private IReadOnlyDictionary<HexCoordinates, HighlightBoundaryOutline> _highlightBoundaryOutlines =
         new Dictionary<HexCoordinates, HighlightBoundaryOutline>();
@@ -148,6 +152,8 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
 
     public ICommand DirectionSelectedCommand { get; }
 
+    public ICommand ToggleTargetPreviewCommand { get; }
+
     public BattleMapViewModel(
         IImageService imageService,
         ITerrainAssetService terrainAssetService,
@@ -186,6 +192,11 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
         DirectionSelectedCommand = new AsyncCommand<HexDirection>(direction =>
         {
             CurrentState.HandleFacingSelection(direction);
+            return Task.CompletedTask;
+        });
+        ToggleTargetPreviewCommand = new AsyncCommand(() =>
+        {
+            ToggleTargetPreview();
             return Task.CompletedTask;
         });
         HexConfiguration = new HexRenderConfigurationViewModel();
@@ -359,8 +370,17 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
                 Game.PhaseStepChanges.StartWith(Game.PhaseStepState),
                 (turn, phase, state) => (turn, phase, state))
             .ObserveOn(_dispatcherService.Scheduler)
-            .Subscribe(_ =>
+            .Subscribe(state =>
             {
+                if (_observedPhase is not null && _observedPhase != state.phase)
+                {
+                    RecordSheet.ClearRecentDamage();
+                    _resolutionDamageByTarget.Clear();
+                    _resolutionTargetUnit = null;
+                    NotifyTargetPreviewChanged();
+                }
+
+                _observedPhase = state.phase;
                 ClearSelection();
                 UpdateGamePhase();
                 NotifyStateChanged();
@@ -475,7 +495,30 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
 
     private void ProcessWeaponAttackResolution(WeaponAttackResolutionCommand command)
     {
-        if (Game == null || WeaponAttacks == null || !WeaponAttacks.Any()) return;
+        if (Game == null) return;
+
+        var target = Game.Players.SelectMany(p => p.Units).FirstOrDefault(u => u.Id == command.TargetId);
+        if (target is not null)
+        {
+            _resolutionTargetUnit = target;
+            RecordSheet.SelectUnit(target);
+            var damagedLocations = command.ResolutionData.HitLocationsData?.HitLocations
+                .SelectMany(hit => hit.Damage)
+                .Where(damage => damage.ArmorDamage > 0 || damage.StructureDamage > 0)
+                .Select(damage => damage.Location)
+                .Distinct()
+                .ToArray() ?? [];
+            if (!_resolutionDamageByTarget.TryGetValue(target.Id, out var targetDamage))
+            {
+                targetDamage = [];
+                _resolutionDamageByTarget[target.Id] = targetDamage;
+            }
+            targetDamage.UnionWith(damagedLocations);
+            RecordSheet.SetRecentDamage(targetDamage);
+            NotifyTargetPreviewChanged();
+        }
+
+        if (WeaponAttacks == null || !WeaponAttacks.Any()) return;
 
         // Find and remove the attack that matches the weapon name and target ID
         var attacksToRemove = WeaponAttacks
@@ -570,6 +613,7 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
         NotifyPropertyChanged(nameof(IsPlayerActionButtonVisible));
         NotifyPropertyChanged(nameof(PlayerActionLabel));
         NotifyPropertyChanged(nameof(AvailableActions));
+        NotifyTargetPreviewChanged();
 
         // Update heat projection when the attacker changes
         HeatProjection.Unit = Attacker;
@@ -797,6 +841,41 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
 
     public IUnit? Attacker =>
         CurrentState is WeaponsAttackState weaponsAttackState ? weaponsAttackState.Attacker : null;
+
+    public IUnit? TargetPreviewUnit => _resolutionTargetUnit ??
+        (CurrentState is WeaponsAttackState { CurrentStep: WeaponsAttackStep.TargetSelection } weaponsAttackState
+            ? weaponsAttackState.SelectedTarget
+            : null);
+
+    public bool IsTargetPreviewButtonVisible => _resolutionTargetUnit is null && TargetPreviewUnit is not null;
+
+    public bool IsTargetPreviewPanelVisible =>
+        _resolutionTargetUnit is not null ||
+        IsTargetPreviewButtonVisible && CurrentState is WeaponsAttackState { IsTargetPreviewExpanded: true };
+
+    public void ToggleTargetPreview()
+    {
+        if (_resolutionTargetUnit is not null)
+        {
+            _resolutionTargetUnit = null;
+            RecordSheet.SelectUnit(SelectedUnit);
+            NotifyTargetPreviewChanged();
+            return;
+        }
+
+        if (CurrentState is WeaponsAttackState weaponsAttackState)
+            weaponsAttackState.ToggleTargetPreview();
+    }
+
+    public void NotifyTargetPreviewChanged()
+    {
+        var recordSheetUnit = IsTargetPreviewPanelVisible ? TargetPreviewUnit : SelectedUnit;
+        if (!ReferenceEquals(RecordSheet.Unit, recordSheetUnit))
+            RecordSheet.SelectUnit(recordSheetUnit);
+        NotifyPropertyChanged(nameof(IsTargetPreviewButtonVisible));
+        NotifyPropertyChanged(nameof(IsTargetPreviewPanelVisible));
+        NotifyPropertyChanged(nameof(TargetPreviewUnit));
+    }
 
     public void HandleHexSelection(Hex selectedHex)
     {

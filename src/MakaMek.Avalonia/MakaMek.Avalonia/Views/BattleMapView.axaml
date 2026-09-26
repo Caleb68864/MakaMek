@@ -195,6 +195,13 @@
                 ToolTip.Tip="{extensions:Localize 'BattleMap_UnitInfo'}"
                 IconData="{StaticResource RecordSheetIcon}"/>
 
+            <!-- Target Preview Button (opt-in during weapon target selection) -->
+            <templatedControls:ActionButton
+                IsVisible="{Binding IsTargetPreviewButtonVisible}"
+                Command="{Binding ToggleTargetPreviewCommand}"
+                ToolTip.Tip="{extensions:Localize 'BattleMap_TargetPreview'}"
+                IconData="{StaticResource RecordSheetIcon}"/>
+
             <!-- Command Log Button -->
             <templatedControls:ActionButton
                 IsVisible="{Binding !IsCommandLogExpanded}"
@@ -272,6 +279,20 @@
                 HeatProjection="{Binding SelectedUnitHeatProjection}"
                 ShowHeatLevelPanel="True"
                 ShowEventsTab="True" />
+        </templatedControls:GamePanel>
+
+        <!-- Target Preview Panel -->
+        <templatedControls:GamePanel
+            IsVisible="{Binding IsTargetPreviewPanelVisible}"
+            Title="{extensions:Localize 'BattleMap_TargetPreview'}"
+            CloseCommand="{Binding ToggleTargetPreviewCommand}"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Center">
+            <controls:UnitRecordSheet
+                Unit="{Binding TargetPreviewUnit}"
+                DiagramViewModel="{Binding RecordSheet}"
+                ShowHeatLevelPanel="False"
+                ShowEventsTab="False" />
         </templatedControls:GamePanel>
 
         <!-- Command Log Panel -->

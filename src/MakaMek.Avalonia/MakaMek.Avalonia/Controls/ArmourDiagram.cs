@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Globalization;
@@ -13,6 +14,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using Microsoft.Extensions.Logging;
 using Sanet.MakaMek.Assets.Services;
 using Sanet.MakaMek.Core.Models.Units;
@@ -32,12 +34,16 @@ public sealed class ArmourDiagram : UserControl
 
     private static readonly XNamespace SvgNamespace = "http://www.w3.org/2000/svg";
     private readonly IRecordSheetTemplateProvider _assets;
+    private readonly IRecordSheetArtworkProvider? _artworkProvider;
     private readonly IRecordSheetLayout _layout;
     private readonly ILogger<ArmourDiagram> _logger;
     private readonly Image _image = new() { Stretch = Stretch.Uniform };
     private RecordSheetViewModel? _viewModel;
     private long _renderGeneration;
     private bool _isTemplateAvailable;
+    private string? _artworkCacheKey;
+    private byte[]? _artworkBytes;
+    private bool _artworkLookupAttempted;
 
     public event EventHandler<bool>? TemplateAvailabilityChanged;
 
@@ -45,8 +51,18 @@ public sealed class ArmourDiagram : UserControl
         IRecordSheetTemplateProvider assets,
         IRecordSheetLayout layout,
         ILogger<ArmourDiagram> logger)
+        : this(assets, layout, logger, null)
+    {
+    }
+
+    public ArmourDiagram(
+        IRecordSheetTemplateProvider assets,
+        IRecordSheetLayout layout,
+        ILogger<ArmourDiagram> logger,
+        IRecordSheetArtworkProvider? artworkProvider)
     {
         _assets = assets;
+        _artworkProvider = artworkProvider;
         _layout = layout;
         _logger = logger;
         Content = new ScrollViewer
@@ -97,6 +113,13 @@ public sealed class ArmourDiagram : UserControl
             return;
         }
 
+        if (!string.Equals(_artworkCacheKey, data.FluffArtworkName, StringComparison.Ordinal))
+        {
+            _artworkCacheKey = data.FluffArtworkName;
+            _artworkBytes = null;
+            _artworkLookupAttempted = false;
+        }
+
         try
         {
             await using var template = await _assets.GetTemplateAsync("mek_biped_default.svg");
@@ -120,8 +143,11 @@ public sealed class ArmourDiagram : UserControl
             }
 
             AddCriticalSlotSeam(root);
+            AddArtworkSeam(root);
             await AddArmourPipsAsync(document, armourPips, data);
             await AddStructurePipsAsync(document, structurePips, data);
+            AddCriticalSlots(document, FindById(root, "criticalSlotOverlay"), data);
+            AddFluffArtwork(document, FindById(root, "recordSheetArtworkOverlay"), data, _artworkBytes);
 
             using var svgStream = new MemoryStream();
             using (var writer = XmlWriter.Create(svgStream, new XmlWriterSettings
@@ -152,6 +178,7 @@ public sealed class ArmourDiagram : UserControl
                 _image.Source = renderedBitmap;
                 ResizeImage(Bounds.Width);
                 SetTemplateAvailability(true);
+                StartArtworkLookup(data, generation);
             }
             else
                 renderedBitmap.Dispose();
@@ -189,6 +216,75 @@ public sealed class ArmourDiagram : UserControl
             _ = RenderCoreAsync(_viewModel?.DiagramData, Interlocked.Increment(ref _renderGeneration));
     }
 
+    private static void AddArtworkSeam(XElement root)
+    {
+        if (FindById(root, "recordSheetArtworkOverlay") is not null) return;
+        root.Add(new XElement(SvgNamespace + "g", new XAttribute("id", "recordSheetArtworkOverlay")));
+    }
+
+    private static void AddFluffArtwork(
+        XDocument document, XElement? overlayLayer, RecordSheetDiagramData data, byte[]? artworkBytes)
+    {
+        if (overlayLayer is null || artworkBytes is null || artworkBytes.Length == 0 ||
+            data.FluffArtworkName is null)
+            return;
+
+        var root = document.Root;
+        var region = FindById(root, "fluffSinglePilot");
+        if (root is null || region is null || !TryGetRegionBounds(region, out var x, out var y, out var width, out var height))
+            return;
+
+        const double inset = 1;
+        var href = "data:image/png;base64," + Convert.ToBase64String(artworkBytes);
+        overlayLayer.Add(new XElement(SvgNamespace + "image",
+            new XAttribute("data-record-sheet-artwork", data.FluffArtworkName),
+            new XAttribute("x", Number(x + inset)),
+            new XAttribute("y", Number(y + inset)),
+            new XAttribute("width", Number(Math.Max(0, width - inset * 2))),
+            new XAttribute("height", Number(Math.Max(0, height - inset * 2))),
+            new XAttribute("preserveAspectRatio", "xMidYMid meet"),
+            new XAttribute("href", href),
+            GetAncestorTransforms(region, root) is { } transform ? new XAttribute("transform", transform) : null));
+    }
+
+    private void StartArtworkLookup(RecordSheetDiagramData data, long generation)
+    {
+        if (OperatingSystem.IsAndroid() || _artworkProvider is null || _artworkLookupAttempted ||
+            string.IsNullOrWhiteSpace(data.FluffArtworkName))
+            return;
+
+        _artworkLookupAttempted = true;
+        _ = LoadArtworkAsync(data);
+    }
+
+    private async Task LoadArtworkAsync(RecordSheetDiagramData data)
+    {
+        try
+        {
+            var mechName = data.FluffArtworkName!;
+            await using var stream = await _artworkProvider!.GetMechArtworkAsync(mechName);
+            if (stream is null) return;
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            if (buffer.Length == 0 ||
+                !string.Equals(_artworkCacheKey, mechName, StringComparison.Ordinal))
+                return;
+
+            var artworkBytes = buffer.ToArray();
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!string.Equals(_artworkCacheKey, mechName, StringComparison.Ordinal)) return;
+                _artworkBytes = artworkBytes;
+                _ = RenderCoreAsync(_viewModel?.DiagramData ?? data,
+                    Interlocked.Increment(ref _renderGeneration));
+            });
+        }
+        catch
+        {
+            // Optional artwork must never make the record sheet unavailable.
+        }
+    }
+
     private async Task AddArmourPipsAsync(
         XDocument document, XElement overlayLayer, RecordSheetDiagramData data)
     {
@@ -214,7 +310,7 @@ public sealed class ArmourDiagram : UserControl
                 if (clusterName is null) continue;
 
                 await AddClusterAsync(_assets.GetPipClusterAsync(clusterName), overlayLayer, regionId,
-                    clusterName, null, partData);
+                    clusterName, location, null, partData, data.RecentlyDamagedLocations.Contains(location));
             }
         }
     }
@@ -239,17 +335,182 @@ public sealed class ArmourDiagram : UserControl
                     partData.CurrentStructure, StatusMarker(partData));
 
             await AddClusterAsync(_assets.GetPipClusterAsync(clusterName), overlayLayer, regionId,
-                clusterName, document, partData);
+                clusterName, location, document, partData, data.RecentlyDamagedLocations.Contains(location));
         }
     }
+
+    private void AddCriticalSlots(
+        XDocument document,
+        XElement? overlayLayer,
+        RecordSheetDiagramData data)
+    {
+        if (overlayLayer is null) return;
+        var root = document.Root;
+        if (root is null) return;
+
+        foreach (var location in Enum.GetValues<PartLocation>())
+        {
+            var regionId = _layout.CriticalSlotRegionId(location);
+            if (regionId is null) continue;
+
+            var region = FindById(document.Root, regionId);
+            if (region is null || !TryGetRegionBounds(region, out var x, out var y, out var width, out var height))
+            {
+                _logger.LogWarning("Critical-slot region {RegionId} is missing or has no rectangular bounds", regionId);
+                continue;
+            }
+
+            if (!data.CriticalSlots.TryGetValue(location, out var slots))
+            {
+                overlayLayer.Add(CreateMissingLocationMarker(
+                    regionId, x, y, width, height, GetAncestorTransforms(region, root)));
+                continue;
+            }
+
+            AddCriticalSlotCells(
+                overlayLayer, regionId, slots, x, y, width, height, GetAncestorTransforms(region, root));
+        }
+    }
+
+    private static void AddCriticalSlotCells(
+        XElement overlayLayer,
+        string regionId,
+        IReadOnlyList<RecordSheetCriticalSlotData> slots,
+        double x,
+        double y,
+        double width,
+        double height,
+        string? transform)
+    {
+        if (slots.Count == 0) return;
+
+        const double margin = 1.25;
+        const double centerGap = 1;
+        var rows = (slots.Count + 1) / 2;
+        var cellWidth = (width - (margin * 2) - centerGap) / 2;
+        var cellHeight = (height - (margin * 2)) / rows;
+        var slotGroup = new XElement(SvgNamespace + "g",
+            new XAttribute("data-template-region", regionId),
+            transform is null ? null : new XAttribute("transform", transform));
+
+        foreach (var slot in slots)
+        {
+            // The template presents critical slots as two vertical groups of six.
+            var column = slot.Slot / rows;
+            var row = slot.Slot % rows;
+            if (column > 1) continue;
+
+            var cellX = x + margin + column * (cellWidth + centerGap);
+            var cellY = y + margin + row * cellHeight;
+            var style = GetCriticalSlotStyle(slot.State);
+            slotGroup.Add(new XElement(SvgNamespace + "rect",
+                new XAttribute("data-critical-slot", slot.Slot),
+                new XAttribute("data-slot-state", slot.State.ToString()),
+                new XAttribute("x", Number(cellX)),
+                new XAttribute("y", Number(cellY)),
+                new XAttribute("width", Number(cellWidth)),
+                new XAttribute("height", Number(cellHeight)),
+                new XAttribute("fill", style.Fill),
+                new XAttribute("stroke", style.Stroke),
+                new XAttribute("stroke-width", "0.45")));
+
+            slotGroup.Add(new XElement(SvgNamespace + "text",
+                new XAttribute("x", Number(cellX + 1)),
+                new XAttribute("y", Number(cellY + 3.1)),
+                new XAttribute("font-size", "2.6"),
+                new XAttribute("fill", "#666666"),
+                new XAttribute("data-slot-number", slot.Slot + 1),
+                (slot.Slot + 1).ToString(CultureInfo.InvariantCulture)));
+
+            if (slot.State == CriticalSlotState.Empty) continue;
+            var label = slot.State == CriticalSlotState.Destroyed ? "X " + slot.ComponentName : slot.ComponentName;
+            if (string.IsNullOrWhiteSpace(label)) continue;
+
+            var textWidth = Math.Min(cellWidth - 4, Math.Max(4, label.Length * 2.15));
+            slotGroup.Add(new XElement(SvgNamespace + "text",
+                new XAttribute("x", Number(cellX + 4)),
+                new XAttribute("y", Number(cellY + cellHeight * 0.7)),
+                new XAttribute("font-size", "4"),
+                new XAttribute("font-weight", slot.State == CriticalSlotState.Intact ? "normal" : "bold"),
+                new XAttribute("fill", style.Text),
+                new XAttribute("textLength", Number(textWidth)),
+                new XAttribute("lengthAdjust", "spacingAndGlyphs"),
+                label));
+        }
+
+        overlayLayer.Add(slotGroup);
+    }
+
+    private static XElement CreateMissingLocationMarker(
+        string regionId,
+        double x,
+        double y,
+        double width,
+        double height,
+        string? transform) =>
+        new(SvgNamespace + "g",
+            new XAttribute("data-template-region", regionId),
+            new XAttribute("data-missing-location", "true"),
+            transform is null ? null : new XAttribute("transform", transform),
+            new XElement(SvgNamespace + "rect",
+                new XAttribute("x", Number(x)),
+                new XAttribute("y", Number(y)),
+                new XAttribute("width", Number(width)),
+                new XAttribute("height", Number(height)),
+                new XAttribute("fill", "#f7e2e2"),
+                new XAttribute("stroke", "#9b2c2c"),
+                new XAttribute("stroke-width", "1")),
+            new XElement(SvgNamespace + "path",
+                new XAttribute("d", $"M {Number(x)} {Number(y)} L {Number(x + width)} {Number(y + height)} M {Number(x + width)} {Number(y)} L {Number(x)} {Number(y + height)}"),
+                new XAttribute("stroke", "#9b2c2c"),
+                new XAttribute("stroke-width", "1")));
+
+    private static string? GetAncestorTransforms(XElement element, XElement root)
+    {
+        var transforms = element.Ancestors()
+            .Where(ancestor => !ReferenceEquals(ancestor, root))
+            .Reverse()
+            .Select(ancestor => (string?)ancestor.Attribute("transform"))
+            .Where(transform => !string.IsNullOrWhiteSpace(transform));
+        var result = string.Join(" ", transforms);
+        return result.Length == 0 ? null : result;
+    }
+
+    private static (string Fill, string Stroke, string Text) GetCriticalSlotStyle(CriticalSlotState state) => state switch
+    {
+        CriticalSlotState.Hit => ("#fff1c2", "#bd7a00", "#8a4b00"),
+        CriticalSlotState.Destroyed => ("#f3d1d1", "#a52a2a", "#8b1d1d"),
+        CriticalSlotState.Empty => ("#f4f4f4", "#777777", "#333333"),
+        _ => ("#ffffff", "#777777", "#111111")
+    };
+
+    private static bool TryGetRegionBounds(
+        XElement region,
+        out double x,
+        out double y,
+        out double width,
+        out double height)
+    {
+        x = y = width = height = 0;
+        return TryGetNumber(region, "x", out x) && TryGetNumber(region, "y", out y) &&
+               TryGetNumber(region, "width", out width) && TryGetNumber(region, "height", out height);
+    }
+
+    private static bool TryGetNumber(XElement element, string attribute, out double value) =>
+        double.TryParse((string?)element.Attribute(attribute), NumberStyles.Float,
+            CultureInfo.InvariantCulture, out value);
+
+    private static string Number(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
 
     private async Task AddClusterAsync(
         Task<Stream?> streamTask,
         XElement overlayLayer,
         string regionId,
         string clusterName,
+        PartLocation location,
         XDocument? document,
-        RecordSheetPartData? partData)
+        RecordSheetPartData? partData,
+        bool recentlyDamaged)
     {
         await using var stream = await streamTask;
         if (stream is null) return;
@@ -276,6 +537,11 @@ public sealed class ArmourDiagram : UserControl
             };
             overlayLayer.Add(new XElement(SvgNamespace + "g",
                 new XAttribute("data-template-region", regionId),
+                recentlyDamaged ? new XAttribute("stroke", "#e4572e")
+                    : null,
+                recentlyDamaged ? new XAttribute("stroke-width", "1.5")
+                    : null,
+                recentlyDamaged ? new XAttribute("data-recent-damage", location.ToString()) : null,
                 new XAttribute("opacity", opacity),
                 new XElement(sourceSwitch)));
 

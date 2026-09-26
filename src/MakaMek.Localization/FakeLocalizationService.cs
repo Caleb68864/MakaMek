@@ -342,6 +342,7 @@ public class FakeLocalizationService : ILocalizationService
         ["BattleMap_SelectTargetLocation"] = "Select Target Location",
         ["BattleMap_ResetMap"] = "Reset Map",
         ["BattleMap_UnitInfo"] = "Unit Info",
+        ["BattleMap_TargetPreview"] = "Target Preview",
         ["BattleMap_Commands"] = "Commands",
         ["BattleMap_MapSettings"] = "Map Settings",
         ["BattleMap_CommandLog"] = "Command Log",
