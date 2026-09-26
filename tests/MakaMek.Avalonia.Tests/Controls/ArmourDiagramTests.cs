@@ -170,6 +170,38 @@ public class ArmourDiagramTests
     }
 
     [Fact]
+    public async Task ViewModelBinding_WhenClearedDuringArtworkFetch_DoesNotRestoreOldSheet()
+    {
+        await Session.Dispatch(async () =>
+        {
+            var pendingArtwork = new TaskCompletionSource<Stream?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var assets = Substitute.For<IRecordSheetTemplateProvider>();
+            assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(TemplateSvg));
+            assets.GetPipClusterAsync(Arg.Any<string>())
+                .Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
+            var artwork = Substitute.For<IRecordSheetArtworkProvider>();
+            artwork.GetMechArtworkAsync("TestMech TestModel").Returns(_ => pendingArtwork.Task);
+            var viewModel = new RecordSheetViewModel();
+            viewModel.SelectUnit(new Mech("TestMech", "TestModel", 20,
+                [new CenterTorso("Center Torso", 10, 3, 6)]));
+            var control = new ArmourDiagram(assets, new RecordSheetLayout(),
+                NullLogger<ArmourDiagram>.Instance, artwork) { ViewModel = viewModel };
+            control.Measure(new Size(900, 1200));
+            control.Arrange(new Rect(0, 0, 900, 1200));
+
+            _ = artwork.Received(1).GetMechArtworkAsync("TestMech TestModel");
+            viewModel.SelectUnit(null);
+            var image = (Image)((Border)((ScrollViewer)control.Content!).Content!).Child!;
+            image.Source.ShouldBeNull();
+
+            pendingArtwork.SetResult(PngFor(SKColors.Red));
+            await Task.Delay(50);
+
+            image.Source.ShouldBeNull();
+        }, CancellationToken.None);
+    }
+
+    [Fact]
     public async Task ViewModelBinding_WhenUnitIsDamaged_RendersUpdatedValuesWithoutReselection()
     {
         await Session.Dispatch(async () =>

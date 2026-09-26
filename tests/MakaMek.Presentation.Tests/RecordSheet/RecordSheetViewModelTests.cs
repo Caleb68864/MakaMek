@@ -109,6 +109,22 @@ public class RecordSheetViewModelTests
     }
 
     [Fact]
+    public void SelectUnit_ClearsRecentDamageOnlyWhenTheUnitChanges()
+    {
+        var first = CreateMech(20, 10);
+        var second = CreateMech(100, 47);
+        var viewModel = new RecordSheetViewModel();
+        viewModel.SelectUnit(first);
+        viewModel.AddRecentDamage([PartLocation.CenterTorso]);
+
+        viewModel.SelectUnit(first);
+        viewModel.DiagramData!.RecentlyDamagedLocations.ShouldContain(PartLocation.CenterTorso);
+
+        viewModel.SelectUnit(second);
+        viewModel.DiagramData!.RecentlyDamagedLocations.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void SelectUnit_ProjectsEmptyIntactHitAndDestroyedCriticalSlots()
     {
         var unit = CreateMech(20, 10);

@@ -106,6 +106,9 @@ public sealed class ArmourDiagram : UserControl
     {
         if (data is null)
         {
+            _artworkCacheKey = null;
+            _artworkBytes = null;
+            _artworkLookupAttempted = false;
             SetImageSource(null);
             _image.Width = double.NaN;
             _image.Height = double.NaN;

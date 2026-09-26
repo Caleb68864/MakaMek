@@ -24,6 +24,8 @@ public sealed class RecordSheetViewModel : BaseViewModel
 
     public void SelectUnit(IUnit? unit)
     {
+        if (!ReferenceEquals(Unit, unit))
+            _recentDamageLocations.Clear();
         Unit = unit;
         Refresh();
     }
