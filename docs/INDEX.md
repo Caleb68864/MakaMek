@@ -11,6 +11,7 @@ Navigate to a category index to see available documents with summaries. Load onl
 | Architecture | [architecture/INDEX.md](architecture/INDEX.md) | Architectural designs for core game modules, systems, and AI bot subsystems |
 | Analysis | [analysis/INDEX.md](analysis/INDEX.md) | Technical analyses, integration studies, design evaluations, and race condition investigations |
 | Project | [project/INDEX.md](project/INDEX.md) | Project-level planning, requirements specifications, and completion tracking |
+| Roadmap | [roadmap/INDEX.md](roadmap/INDEX.md) | Forward-looking briefs for planned work: landing order, sizing, constraints, and known traps, written to be executable by someone who has not seen the work |
 | Rules | [rules/INDEX.md](rules/INDEX.md) | BattleTech game rules implementation documentation |
 | Design | [design/INDEX.md](design/INDEX.md) | Visual design, colour schemes, and UX documentation |
 | Archive | [archive/INDEX.md](archive/INDEX.md) | Historical and superseded documents preserved for reference |
