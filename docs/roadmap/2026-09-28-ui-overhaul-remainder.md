@@ -45,11 +45,14 @@ Unit selection in `NewGameViewModel` becomes searchable and budget-aware: filter
 remaining tonnage as units are added, so picking a force from a long variant list works on a phone.
 Presentation only.
 
-**Source:** `feature/mech-selection`. Take only the `NewGameViewModel` / unit-selection files and their
-tests; leave everything inherited from earlier layers behind.
+**Re-cut and ready: `feature/1522-mech-selection`, version 0.64.25, 7 files, +605/-5.** The old
+cumulative branch held exactly one commit of its own — "make mech selection searchable and budgeted" —
+so cherry-picking that single commit onto a fresh branch off `main` reproduced the layer exactly.
+`Directory.Build.props` was the only conflict. Verified standalone: Presentation 1160, Core 3078,
+Avalonia 261 green, diff coverage 115/115.
 
 **Independent of layer 4.** It touches the new-game screen, not the battle map, so it does not wait for
-the open PRs. This is the layer to send next.
+the open PRs. This is the layer to send next — held only because eight PRs are already open.
 
 **Accept when:** filtering narrows the list as the query changes; the remaining budget reflects the
 current selection; the existing selection flow is unchanged when no query is entered.
