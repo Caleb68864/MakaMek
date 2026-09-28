@@ -287,7 +287,27 @@ and breaks the moment a test — or a provider — serves different content unde
   run: `MakaMek.Avalonia.iOS` fails restore without the iOS workload pack, which is an environment gap
   unrelated to any change.
 - Diff coverage is reported by a bot on every PR. It is informational and has no `fail-under` gate, but
-  every new public member should still arrive with a test that exercises it.
+  every new public member should still arrive with a test that exercises it. It counts **changed lines
+  only**, so do not chase pre-existing gaps in a file you merely touched — that inflates the diff and
+  invites the size objection this split exists to avoid.
+
+### Coverage as it stands
+
+Measured against changed lines only, which is what the bot reports:
+
+| Layer group | Diff coverage |
+|---|---|
+| Presentation composer (layer 7) | **98.8%** — remainder structurally unreachable |
+| Assets providers (layers 1-4) | **99.4%** — remainder is a coverlet artefact on a `catch` clause |
+| Avalonia (layers 10-12) | **not measured at all** — see below |
+
+**Layers 10, 11 and 12 will report no coverage data, and their PR bodies must say why.**
+`avalonia.yml` instruments only `Sanet.MakaMek.Avalonia.Converters*` and `…Game*`. These layers live in
+`…Controls` and `…Services`, so the collector never looks at them: `ArmourDiagramTests.cs` is 701 lines
+and none of it will show. A reviewer seeing "no coverage" against a 332-line control will otherwise
+assume it is untested, and the honest answer is that the workflow does not look there. Widening the
+filter is a one-line change to that workflow and the maintainer's call — offer it alongside layer 10
+rather than making it unasked.
 
 ## Open questions — maintainer's call, not the implementer's
 
