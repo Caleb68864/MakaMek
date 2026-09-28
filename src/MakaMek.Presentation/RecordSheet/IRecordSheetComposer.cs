@@ -8,5 +8,6 @@ public interface IRecordSheetComposer
     /// Returns null when the assets cannot produce a sheet, which is the caller's signal to fall
     /// back to the text record sheet.
     /// </summary>
-    Task<byte[]?> ComposeAsync(RecordSheetDiagramData data, byte[]? artwork = null);
+    Task<byte[]?> ComposeAsync(
+        RecordSheetDiagramData data, byte[]? artwork = null, CancellationToken cancellationToken = default);
 }

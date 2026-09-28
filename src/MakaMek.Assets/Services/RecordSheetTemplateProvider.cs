@@ -56,8 +56,7 @@ public sealed class RecordSheetTemplateProvider : IRecordSheetTemplateProvider
         {
             try
             {
-                var ids = await _resourceIds.GetOrAdd(provider, p =>
-                    new Lazy<Task<IReadOnlyList<string>>>(() => LoadResourceIdsAsync(p))).Value;
+                var ids = await GetResourceIdsAsync(provider);
                 var id = ids.FirstOrDefault(candidate =>
                     string.Equals(GetFileName(candidate), assetName, StringComparison.OrdinalIgnoreCase));
                 if (id == null) continue;
@@ -78,6 +77,22 @@ public sealed class RecordSheetTemplateProvider : IRecordSheetTemplateProvider
 
         LogMissingOnce(assetName);
         return null;
+    }
+
+    /// <summary>
+    /// Lists a provider's assets once and remembers the result, except when it comes back empty: a
+    /// listing that failed - the source was offline, or rate limited - must not become the answer
+    /// for the rest of the session, so it is retried on the next lookup.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> GetResourceIdsAsync(IResourceStreamProvider provider)
+    {
+        var pending = _resourceIds.GetOrAdd(provider, p =>
+            new Lazy<Task<IReadOnlyList<string>>>(() => LoadResourceIdsAsync(p)));
+        var ids = await pending.Value;
+        if (ids.Count == 0)
+            _resourceIds.TryRemove(
+                new KeyValuePair<IResourceStreamProvider, Lazy<Task<IReadOnlyList<string>>>>(provider, pending));
+        return ids;
     }
 
     private async Task<IReadOnlyList<string>> LoadResourceIdsAsync(IResourceStreamProvider provider)

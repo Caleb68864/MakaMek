@@ -32,8 +32,7 @@ public sealed class RecordSheetArtworkProvider : IRecordSheetArtworkProvider
         {
             try
             {
-                var ids = await _resourceIds.GetOrAdd(provider, p =>
-                    new Lazy<Task<IReadOnlyList<string>>>(() => LoadResourceIdsAsync(p))).Value;
+                var ids = await GetResourceIdsAsync(provider);
                 var id = ids.FirstOrDefault(candidate =>
                     string.Equals(GetFileName(candidate), fileName, StringComparison.OrdinalIgnoreCase));
                 if (id is null) continue;
@@ -48,6 +47,21 @@ public sealed class RecordSheetArtworkProvider : IRecordSheetArtworkProvider
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Lists a provider's artwork once and remembers the result, except when it comes back empty, so
+    /// a source that was briefly unreachable is tried again rather than written off for the session.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> GetResourceIdsAsync(IResourceStreamProvider provider)
+    {
+        var pending = _resourceIds.GetOrAdd(provider, p =>
+            new Lazy<Task<IReadOnlyList<string>>>(() => LoadResourceIdsAsync(p)));
+        var ids = await pending.Value;
+        if (ids.Count == 0)
+            _resourceIds.TryRemove(
+                new KeyValuePair<IResourceStreamProvider, Lazy<Task<IReadOnlyList<string>>>>(provider, pending));
+        return ids;
     }
 
     private static async Task<IReadOnlyList<string>> LoadResourceIdsAsync(IResourceStreamProvider provider)

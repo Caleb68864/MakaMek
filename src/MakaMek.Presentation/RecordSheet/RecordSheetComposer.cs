@@ -45,15 +45,18 @@ public sealed class RecordSheetComposer : IRecordSheetComposer
     }
 
     /// <inheritdoc />
-    public async Task<byte[]?> ComposeAsync(RecordSheetDiagramData data, byte[]? artwork = null)
+    public async Task<byte[]?> ComposeAsync(
+        RecordSheetDiagramData data, byte[]? artwork = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(data);
+        cancellationToken.ThrowIfCancellationRequested();
 
         await using var template = await _assets.GetTemplateAsync(TemplateName);
         if (template is null) return null;
 
         // Composition mutates the tree, so the cached parse is cloned rather than handed out.
-        var document = new XDocument(ParseCached(await ReadAllBytesAsync(template)));
+        if (ParseCached(await ReadAllBytesAsync(template)) is not { } parsedTemplate) return null;
+        var document = new XDocument(parsedTemplate);
         var root = document.Root;
         var armourPips = FindById(root, "canonArmorPips");
         var structurePips = FindById(root, "canonStructurePips");
@@ -66,7 +69,9 @@ public sealed class RecordSheetComposer : IRecordSheetComposer
         AddCriticalSlotSeam(root);
         AddArtworkSeam(root);
         var hasAllArmourPips = await AddArmourPipsAsync(document, armourPips, data);
+        cancellationToken.ThrowIfCancellationRequested();
         var hasAllStructurePips = await AddStructurePipsAsync(document, structurePips, data);
+        cancellationToken.ThrowIfCancellationRequested();
         if (!hasAllArmourPips || !hasAllStructurePips) return null;
 
         AddCriticalSlots(document, FindById(root, "criticalSlotOverlay"), data);
@@ -296,9 +301,29 @@ public sealed class RecordSheetComposer : IRecordSheetComposer
     /// Hashing is far cheaper than an XML parse, and keying on content means an asset that changes
     /// is picked up rather than served from the previous render.
     /// </summary>
-    private XDocument ParseCached(byte[] bytes) => _documentCache.GetOrAdd(
-        Convert.ToHexString(SHA256.HashData(bytes)),
-        _ => XDocument.Load(new MemoryStream(bytes, writable: false)));
+    private XDocument? ParseCached(byte[] bytes)
+    {
+        var key = Convert.ToHexString(SHA256.HashData(bytes));
+        if (_documentCache.TryGetValue(key, out var cached)) return cached;
+
+        try
+        {
+            // Assets are fetched from a third-party repository, so parsing is treated as untrusted
+            // input: DTD processing stays off, which is the default and is what blocks entity
+            // expansion attacks, and a document that will not parse becomes "no sheet" rather than
+            // an exception thrown through the render.
+            using var reader = XmlReader.Create(new MemoryStream(bytes, writable: false),
+                new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null });
+            var document = XDocument.Load(reader);
+            _documentCache[key] = document;
+            return document;
+        }
+        catch (XmlException ex)
+        {
+            _logger.LogWarning(ex, "A record sheet asset could not be parsed as SVG");
+            return null;
+        }
+    }
 
     private static double ParseNumber(XElement element, string attribute)
     {
@@ -510,6 +535,7 @@ public sealed class RecordSheetComposer : IRecordSheetComposer
         try
         {
             var cluster = ParseCached(await ReadAllBytesAsync(stream));
+            if (cluster is null) return false;
             var sourceSwitch = cluster.Root?.Element(SvgNamespace + "switch");
             if (sourceSwitch is null)
             {

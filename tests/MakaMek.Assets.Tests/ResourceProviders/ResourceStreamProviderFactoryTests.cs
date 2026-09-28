@@ -92,6 +92,46 @@ public class ResourceStreamProviderFactoryTests
             .ShouldBe("https://api.github.com/repos/owner/repo/contents/data/units/mechs");
     }
 
+    [Theory]
+    [InlineData(AssetType.RecordSheetTemplates, "svg", "images/recordsheets/templates_us")]
+    [InlineData(AssetType.RecordSheetPips, "svg", "images/recordsheets/biped_pips")]
+    [InlineData(AssetType.UnitFluff, "png", "images/fluff/mech")]
+    public void Create_GitHubRecordSheetAssets_UseTheirOwnExtensionAndSubfolder(
+        AssetType assetType, string extension, string subPath)
+    {
+        // Record sheet sources are configured like units and hexes, so the factory has to know the
+        // extension and repository subfolder for each of them.
+        var sut = CreateSut();
+        var config = new AssetProviderConfigData(
+            "megamek", ProviderType.GitHub, assetType,
+            "https://api.github.com/repos/MegaMek/mm-data/contents/data",
+            IsActive: true, IsDefault: true, SortOrder: 0);
+
+        var provider = sut.Create(config);
+
+        GetPrivateField(provider, "_fileExtension").ShouldBe(extension);
+        GetPrivateField(provider, "_apiUrl")
+            .ShouldBe($"https://api.github.com/repos/MegaMek/mm-data/contents/data/{subPath}");
+    }
+
+    [Theory]
+    [InlineData(AssetType.RecordSheetTemplates)]
+    [InlineData(AssetType.RecordSheetPips)]
+    [InlineData(AssetType.UnitFluff)]
+    public void Create_FilesystemRecordSheetAssets_RootTheirOwnSubfolder(AssetType assetType)
+    {
+        // A local checkout is configured the same way, which is what replaced the old
+        // MAKAMEK_MM_DATA_ROOT environment variable.
+        var sut = CreateSut();
+        var config = new AssetProviderConfigData(
+            "local", ProviderType.Filesystem, assetType, Path.Combine("mm-data", "data"),
+            IsActive: true, IsDefault: false, SortOrder: 1);
+
+        var provider = sut.Create(config);
+
+        provider.ShouldBeOfType<LocalFolderResourceStreamProvider>();
+    }
+
     [Fact]
     public void Create_GitHubHexes_UsesMmtxExtension()
     {

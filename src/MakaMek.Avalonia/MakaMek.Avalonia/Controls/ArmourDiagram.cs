@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
+using AsyncAwaitBestPractices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -43,6 +44,7 @@ public sealed class ArmourDiagram : UserControl
     private RecordSheetViewModel? _viewModel;
     private long _renderGeneration;
     private int _rendersInFlight;
+    private CancellationTokenSource? _renderCancellation;
     private RecordSheetDiagramData? _latestData;
     private bool _isTemplateAvailable;
     private string? _artworkCacheKey;
@@ -141,14 +143,14 @@ public sealed class ArmourDiagram : UserControl
         var generation = Interlocked.Increment(ref _renderGeneration);
         if (data is null)
         {
-            _ = RenderCoreAsync(null, generation);
+            RenderCoreAsync(null, generation).SafeFireAndForget();
             return;
         }
 
         Dispatcher.Post(() =>
         {
             if (generation == Volatile.Read(ref _renderGeneration))
-                _ = RenderCoreAsync(data, generation);
+                RenderCoreAsync(data, generation).SafeFireAndForget();
         }, DispatcherPriority.Background);
     }
 
@@ -163,18 +165,36 @@ public sealed class ArmourDiagram : UserControl
     {
         if (generation != Volatile.Read(ref _renderGeneration)) return;
 
+        var cancellation = new CancellationTokenSource();
+        var superseded = Interlocked.Exchange(ref _renderCancellation, cancellation);
+        try
+        {
+            superseded?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // It finished and disposed itself between the exchange and here; nothing to cancel.
+        }
+
         Interlocked.Increment(ref _rendersInFlight);
         try
         {
-            await RenderSheetAsync(data, generation);
+            await RenderSheetAsync(data, generation, cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Superseded by a newer render; the newer one owns what is shown.
         }
         finally
         {
             Interlocked.Decrement(ref _rendersInFlight);
+            Interlocked.CompareExchange(ref _renderCancellation, null, cancellation);
+            cancellation.Dispose();
         }
     }
 
-    private async Task RenderSheetAsync(RecordSheetDiagramData? data, long generation)
+    private async Task RenderSheetAsync(
+        RecordSheetDiagramData? data, long generation, CancellationToken cancellationToken)
     {
         if (data is null)
         {
@@ -205,7 +225,7 @@ public sealed class ArmourDiagram : UserControl
             // thread through Avalonia's synchronization context.
             var rendered = await Task.Run<Bitmap?>(async () =>
             {
-                var svg = await _composer.ComposeAsync(data, artwork);
+                var svg = await _composer.ComposeAsync(data, artwork, cancellationToken);
                 if (svg is null) return null;
                 var image = _rasterizer.RasterizeToPng(svg);
                 return image is null ? null : new Bitmap(new MemoryStream(image.PngBytes, writable: false));
@@ -278,7 +298,7 @@ public sealed class ArmourDiagram : UserControl
             return;
 
         _artworkLookupAttempted = true;
-        _ = LoadArtworkAsync(data);
+        LoadArtworkAsync(data).SafeFireAndForget();
     }
 
     private async Task LoadArtworkAsync(RecordSheetDiagramData data)
@@ -299,8 +319,8 @@ public sealed class ArmourDiagram : UserControl
             {
                 if (!string.Equals(_artworkCacheKey, mechName, StringComparison.Ordinal)) return;
                 _artworkBytes = artworkBytes;
-                _ = RenderCoreAsync(_latestData,
-                    Interlocked.Increment(ref _renderGeneration));
+                RenderCoreAsync(_latestData, Interlocked.Increment(ref _renderGeneration))
+                    .SafeFireAndForget();
             });
         }
         catch

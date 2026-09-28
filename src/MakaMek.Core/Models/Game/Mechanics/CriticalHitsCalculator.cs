@@ -31,7 +31,7 @@ public class CriticalHitsCalculator : ICriticalHitsCalculator
         _damageTransferCalculator = damageTransferCalculator;
         _mechFactory = mechFactory;
     }
-
+    
     /// <summary>
     /// Calculates critical hits without mutating the authoritative unit, including the newly destroyed
     /// locations and unit-destruction state they would cause.
@@ -43,13 +43,13 @@ public class CriticalHitsCalculator : ICriticalHitsCalculator
     {
         if (!hitLocationsData.Any(damage => damage.StructureDamage > 0))
             return null;
-
+        
         var destroyedPartsBefore = unit.Parts.Values
             .Where(part => part.IsDestroyed)
             .Select(part => part.Location)
             .ToHashSet();
         var wasDestroyedBefore = unit.IsDestroyed;
-
+        
         var simulationUnit = unit.CloneUnit(_mechFactory);
         var allCriticalHitsData = ProcessAndApplyCriticalHitsDamage(simulationUnit, hitLocationsData);
 
@@ -73,14 +73,14 @@ public class CriticalHitsCalculator : ICriticalHitsCalculator
             UnitDestroyed = !wasDestroyedBefore && simulationUnit.IsDestroyed
         };
     }
-
+    
     public HeatExplosionResolution CalculateCriticalHitsForHeatExplosion(
         Unit unit,
         Ammo explodingComponent) // only ammo can explode from heat
     {
         var explosionDamage = explodingComponent.GetExplosionDamage();
         if (explosionDamage <= 0) return HeatExplosionResolution.None; //no possible damage, no explosion
-
+        
         var location = explodingComponent.FirstMountPartLocation;
         if (!location.HasValue) return HeatExplosionResolution.None;
 
@@ -88,7 +88,7 @@ public class CriticalHitsCalculator : ICriticalHitsCalculator
         var slots = explodingComponent.MountedAtFirstLocationSlots;
         if (slots.Length == 0)
             return HeatExplosionResolution.None;
-
+        
         var explosionDamageData = _damageTransferCalculator
             .CalculateExplosionDamage(unit, location.Value, explosionDamage);
 
@@ -108,7 +108,7 @@ public class CriticalHitsCalculator : ICriticalHitsCalculator
             [componentHitData],
             false // Not blown off
         );
-
+        
         var destroyedPartsBefore = unit.Parts.Values
             .Where(part => part.IsDestroyed)
             .Select(part => part.Location)
@@ -135,7 +135,7 @@ public class CriticalHitsCalculator : ICriticalHitsCalculator
             newlyDestroyedParts.Count > 0 ? newlyDestroyedParts : null,
             !wasDestroyedBefore && simulationUnit.IsDestroyed);
     }
-
+    
     private List<LocationCriticalHitsData> ProcessAndApplyCriticalHitsDamage(IUnit unit, List<LocationDamageData> hitLocationsData)
     {
         var allCriticalHitsData = new List<LocationCriticalHitsData>();
@@ -143,7 +143,7 @@ public class CriticalHitsCalculator : ICriticalHitsCalculator
         // Process each location that received damage
         var locationsWithStructureDamage = new Queue<LocationDamageData>( hitLocationsData
             .Where(d => d.StructureDamage > 0));
-
+        
         while (locationsWithStructureDamage.Count > 0)
         {
             var locationHitDamage = locationsWithStructureDamage.Dequeue();
@@ -175,7 +175,7 @@ public class CriticalHitsCalculator : ICriticalHitsCalculator
         PartLocation location,
         int structureDamage)
     {
-        if (!unit.Parts.TryGetValue(location, out var part)
+        if (!unit.Parts.TryGetValue(location, out var part) 
             || part is not { CurrentStructure: > 0 } || structureDamage <= 0)
             return null;
 
@@ -183,7 +183,7 @@ public class CriticalHitsCalculator : ICriticalHitsCalculator
         var criticalHitsData = unit.CalculateCriticalHitsData(location, _diceRoller, _damageTransferCalculator);
         if (criticalHitsData == null)
             return null;
-
+        
         return criticalHitsData with { Location = location };
     }
 }

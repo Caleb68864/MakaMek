@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Sanet.MakaMek.Assets.Configuration;
@@ -79,6 +80,30 @@ public class RecordSheetTemplateProviderTests
             Arg.Is<object>(state => state.ToString()!.Contains("absent.svg")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task ATransientListingFailureIsRetried_NotCachedForTheSession()
+    {
+        // The source can be offline or rate limited when the app starts. Remembering that empty
+        // answer would leave the player with no record sheets until they restart.
+        var provider = Substitute.For<IResourceStreamProvider>();
+        var attempts = 0;
+        provider.GetAvailableResourceIds().Returns(_ =>
+            ++attempts == 1
+                ? throw new HttpRequestException("offline")
+                : Task.FromResult<IEnumerable<string>>(["mek_biped_default.svg"]));
+        provider.GetResourceStream("mek_biped_default.svg")
+            .Returns(_ => new MemoryStream(Encoding.UTF8.GetBytes("<svg/>")));
+        var sut = new RecordSheetTemplateProvider([provider],
+            Substitute.For<ILogger<RecordSheetTemplateProvider>>());
+
+        (await sut.GetTemplateAsync("mek_biped_default.svg")).ShouldBeNull("the source was offline");
+
+        await using var recovered = await sut.GetTemplateAsync("mek_biped_default.svg");
+
+        recovered.ShouldNotBeNull("the listing is tried again once the source is back");
+        attempts.ShouldBe(2);
     }
 
     [Fact]

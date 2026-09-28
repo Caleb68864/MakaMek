@@ -283,6 +283,97 @@ public class RecordSheetComposerTests
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
+    [Fact]
+    public async Task ComposeAsync_RejectsATemplateThatDeclaresADtd()
+    {
+        // Assets come from a third-party repository over the network. A document declaring an
+        // external entity must not be parsed, and must degrade to "no sheet" rather than throwing
+        // through the render or reading the referenced file.
+        var secret = Path.Combine(Path.GetTempPath(), $"makamek-xxe-{Guid.NewGuid():N}.txt");
+        await File.WriteAllTextAsync(secret, "TOP-SECRET");
+        try
+        {
+            var hostile = $"""
+                <?xml version="1.0"?>
+                <!DOCTYPE svg [<!ENTITY leak SYSTEM "file://{secret}">]>
+                <svg xmlns="http://www.w3.org/2000/svg"><text>&leak;</text></svg>
+                """;
+            var assets = Substitute.For<IRecordSheetTemplateProvider>();
+            assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(hostile));
+            assets.GetPipClusterAsync(Arg.Any<string>())
+                .Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
+            var composer = new RecordSheetComposer(assets, new RecordSheetLayout(),
+                NullLogger<RecordSheetComposer>.Instance);
+
+            var svg = await composer.ComposeAsync(RecordSheetSamples.LightMech);
+
+            svg.ShouldBeNull("a template declaring a DTD is refused");
+        }
+        finally
+        {
+            File.Delete(secret);
+        }
+    }
+
+    [Fact]
+    public async Task ComposeAsync_ReturnsNull_WhenTheTemplateIsNotXml()
+    {
+        var assets = Substitute.For<IRecordSheetTemplateProvider>();
+        assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor("404: not found"));
+        assets.GetPipClusterAsync(Arg.Any<string>())
+            .Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
+        var composer = new RecordSheetComposer(assets, new RecordSheetLayout(),
+            NullLogger<RecordSheetComposer>.Instance);
+
+        var svg = await composer.ComposeAsync(RecordSheetSamples.LightMech);
+
+        svg.ShouldBeNull("a provider answering with something that is not SVG must not throw");
+    }
+
+    [Fact]
+    public async Task ComposeAsync_ReturnsNull_WhenAPipClusterIsNotXml()
+    {
+        var assets = Substitute.For<IRecordSheetTemplateProvider>();
+        assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(TemplateSvg));
+        assets.GetPipClusterAsync(Arg.Any<string>()).Returns(_ => StreamFor("<not-svg"));
+        var composer = new RecordSheetComposer(assets, new RecordSheetLayout(),
+            NullLogger<RecordSheetComposer>.Instance);
+
+        var svg = await composer.ComposeAsync(RecordSheetSamples.LightMech);
+
+        svg.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ComposeAsync_StopsWhenCancelled()
+    {
+        // A player switching units quickly supersedes renders. Without cancellation the abandoned
+        // work still composes and rasterises a whole sheet before its result is thrown away.
+        var composer = CreateComposer(out var assets);
+        using var cancellation = new CancellationTokenSource();
+        assets.GetPipClusterAsync(Arg.Any<string>()).Returns(call =>
+        {
+            cancellation.Cancel();
+            return StreamFor(ClusterSvg(call.Arg<string>()));
+        });
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => composer.ComposeAsync(RecordSheetSamples.AssaultMech, null, cancellation.Token));
+    }
+
+    [Fact]
+    public async Task ComposeAsync_StopsBeforeAnyWork_WhenAlreadyCancelled()
+    {
+        var composer = CreateComposer(out var assets);
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => composer.ComposeAsync(RecordSheetSamples.LightMech, null, cancellation.Token));
+
+        await assets.DidNotReceive().GetTemplateAsync(Arg.Any<string>());
+    }
+
     private static async Task<string> Compose(
         RecordSheetComposer composer, RecordSheetDiagramData data, byte[]? artwork = null)
     {
