@@ -40,6 +40,22 @@ Two different reports land on every PR and they measure different things. **Coco
 - **Exercise filters rather than assuming them.** A `Where`/`Any` predicate needs at least one item on each side — a shutdown or wrecked unit alongside a healthy one, an unselected weapon alongside a selected one.
 - **Check before pushing** with `skills/coverage-check`, which runs the same coverlet command and Cocodif report CI uses.
 
+### Trusting your own tests
+
+A passing run is only evidence if the test was capable of failing. These are all real mistakes made in this repo, each of which produced a green suite that verified nothing:
+
+- **Prove a new test file can fail before trusting it.** Temporarily break one assertion in it and confirm a red run. Do this once per new test class, and after any change to how the class dispatches or sets up work.
+- **Read an unfamiliar framework API's real overload set** rather than inferring it from the shape of the call. `HeadlessUnitTestSession` has no `Func<Task>` overload, so `await Session.Dispatch(async () => { ... }, ct)` resolves to `Dispatch<Task>` and returns `Task<Task>`; the single `await` unwraps the outer task, drops the inner one, and every assertion failure inside is lost on an unobserved task. Nothing warns. Be suspicious of any awaited call whose static type could be `Task<Task>`.
+- **Assert the oracle for pixel and render comparisons.** A control that is only `Measure`d and `Arrange`d never paints, so every capture is identical — which silently satisfies any "these renders differ" assertion. Host the control in a `Window`, then pump (`Dispatcher.UIThread.RunJobs()`, `UpdateLayout()`, `AvaloniaHeadlessPlatform.ForceRenderTimerTick()`) before capturing, and have one test prove that a blank and a drawn control produce different, decodable bytes. Rasterising needs `UseSkia()` with `UseHeadlessDrawing = false`; there can be only **one** headless platform per test assembly, so configure it in `HeadlessTestSetup`, never as a second session.
+- **Pump, do not sleep.** Work queued at `DispatcherPriority.Background` never runs inside a bare `await Task.Delay(...)`, so poll loops waiting on it spin out and captures race it.
+- **Make async arrivals deterministic.** Gate a fetch behind a `TaskCompletionSource` when a test needs a "before" state; otherwise it can land during the baseline and both observations match.
+- **`Substitute.For<T>` on a class needs every constructor argument** — Castle does not apply optional-parameter defaults.
+
+### Two traps worth knowing
+
+- **`record` does not give value equality over collection members.** `EqualityComparer<T>.Default` on `IReadOnlyDictionary`/`IReadOnlySet` is reference equality, so a projection that rebuilds its collections never compares equal to the previous one. Gating change notification on that equality then fires on every rebuild. Implement `Equals`/`GetHashCode` over the contents, and add the negative test: unchanged state raises no `PropertyChanged` and triggers no re-render. Count the expensive operation and assert the count.
+- **Every subscription needs a removal point on a lifecycle hook of the subscriber** — `OnDetachedFromVisualTree`, `Dispose` — not only inside a property-change handler. A control subscribed to a view model that outlives it stays alive with everything it holds, and no functional test notices.
+
 ## Versioning (required for PRs)
 
 `Directory.Build.props` holds a single `<VersionPrefix>` for all packages. **Every PR that modifies files under `src/` must bump this version** — `pr-version-check.yml` fails the PR if the version is not greater than `main`. Bump it as part of your change.
