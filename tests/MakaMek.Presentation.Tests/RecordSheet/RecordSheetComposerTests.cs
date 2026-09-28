@@ -402,6 +402,241 @@ public class RecordSheetComposerTests
         await assets.DidNotReceive().GetTemplateAsync(Arg.Any<string>());
     }
 
+    [Fact]
+    public async Task ComposeAsync_ReturnsNull_WhenTheTemplateHasNoPipOverlayLayers()
+    {
+        var composer = CreateComposer(out var assets);
+        assets.GetTemplateAsync(Arg.Any<string>()).Returns(_ => StreamFor("""
+            <svg xmlns="http://www.w3.org/2000/svg" width="576" height="756" viewBox="0 0 576 756">
+              <rect width="576" height="756" fill="white"/>
+            </svg>
+            """));
+
+        var svg = await composer.ComposeAsync(RecordSheetSamples.LightMech);
+
+        svg.ShouldBeNull("without canonArmorPips and canonStructurePips there is nothing to draw into");
+    }
+
+    [Theory]
+    [InlineData("armorPipsCT")]
+    [InlineData("isPipsCT")]
+    public async Task ComposeAsync_ReturnsNull_WhenATemplateRegionIsMissing(string missingRegionId)
+    {
+        var composer = CreateComposer(out var assets);
+        assets.GetTemplateAsync(Arg.Any<string>()).Returns(_ => StreamFor(TemplateWithout(missingRegionId)));
+
+        var svg = await composer.ComposeAsync(RecordSheetSamples.LightMech);
+
+        svg.ShouldBeNull($"a sheet missing {missingRegionId} would silently omit that location's pips");
+    }
+
+    [Fact]
+    public async Task ComposeAsync_StillComposes_WhenTheTemplateHasNoFluffRegion()
+    {
+        var composer = CreateComposer(out var assets);
+        assets.GetTemplateAsync(Arg.Any<string>()).Returns(_ => StreamFor(TemplateWithout("fluffSinglePilot")));
+        var data = RecordSheetDiagramData.FromUnit(CreateMech());
+
+        var svg = await Compose(composer, data, [1, 2, 3, 4]);
+
+        svg.ShouldNotContain("<image", Case.Insensitive);
+        svg.ShouldContain("armorPipsCT", Case.Insensitive,
+            "missing artwork is cosmetic - the sheet itself must still render");
+    }
+
+    [Fact]
+    public async Task ComposeAsync_ReturnsNull_WhenAnOversizedRegionHasNoRowsForGeneratedPips()
+    {
+        // Left arm front armour above the 34-pip cluster ceiling forces the generated fallback,
+        // and armorPipsLA is an empty group with no rows to place pips into.
+        var composer = CreateComposer(out var assets);
+        assets.GetPipClusterAsync(Arg.Is<string>(name => name.StartsWith("Armor_")))
+            .Returns(Task.FromResult<Stream?>(null));
+        var data = RecordSheetDiagramData.Create(20,
+            [new KeyValuePair<ArmourRegion, int>(new ArmourRegion(PartLocation.LeftArm, ArmourFace.Front), 40)]);
+
+        var svg = await composer.ComposeAsync(data);
+
+        svg.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ComposeAsync_ReturnsNull_WhenAPipClusterHasNoSwitchLayer()
+    {
+        var composer = CreateComposer(out var assets);
+        assets.GetPipClusterAsync(Arg.Any<string>()).Returns(_ => StreamFor("""
+            <svg xmlns="http://www.w3.org/2000/svg" width="576" height="756" viewBox="0 0 576 756">
+              <g><path d="M20 80h40v40h-40z"/></g>
+            </svg>
+            """));
+
+        var svg = await composer.ComposeAsync(RecordSheetSamples.LightMech);
+
+        svg.ShouldBeNull("a cluster without its switch layer carries no pips to import");
+    }
+
+    [Fact]
+    public async Task ComposeAsync_ReturnsNull_WhenAPipClusterCannotBeRead()
+    {
+        var composer = CreateComposer(out var assets);
+        assets.GetPipClusterAsync(Arg.Any<string>()).Returns(_ => Task.FromResult<Stream?>(new ThrowingStream()));
+
+        var svg = await composer.ComposeAsync(RecordSheetSamples.LightMech);
+
+        svg.ShouldBeNull("a failed cluster read must not produce a sheet with pips silently missing");
+    }
+
+    [Fact]
+    public async Task ComposeAsync_FadesStructurePips_InProportionToRemainingStructure()
+    {
+        var composer = CreateComposer(out _);
+        var data = RecordSheetSamples.LightMech with
+        {
+            PartStates = new Dictionary<PartLocation, RecordSheetPartData>
+            {
+                [PartLocation.CenterTorso] = new(10, 10, 2, 2,
+                    CurrentStructure: 3, MaxStructure: 6, IsDestroyed: false, IsBlownOff: false)
+            }
+        };
+
+        var svg = await Compose(composer, data);
+
+        svg.ShouldContain("opacity=\"0.5\"", Case.Insensitive,
+            "half the structure remaining should render at half opacity");
+    }
+
+    [Theory]
+    [InlineData(true, false, "0.04")]
+    [InlineData(false, true, "0.3")]
+    public async Task ComposeAsync_DimsGeneratedFallbackPips_ForPartsThatAreGone(
+        bool isBlownOff, bool isDestroyed, string expectedOpacity)
+    {
+        var composer = CreateComposer(out var assets);
+        assets.GetPipClusterAsync(Arg.Is<string>(name => name.StartsWith("Armor_")))
+            .Returns(Task.FromResult<Stream?>(null));
+        var data = OversizedCentreTorso() with
+        {
+            PartStates = new Dictionary<PartLocation, RecordSheetPartData>
+            {
+                [PartLocation.CenterTorso] = new(0, 60, 0, 0, 0, 6, isDestroyed, isBlownOff)
+            }
+        };
+
+        var svg = await Compose(composer, data);
+
+        svg.ShouldContain("data-generated-fallback");
+        svg.ShouldContain($"opacity=\"{expectedOpacity}\"");
+    }
+
+    [Fact]
+    public async Task ComposeAsync_FadesGeneratedStructurePips_InProportionToRemainingStructure()
+    {
+        // Structure only falls back above 100 tons, where MegaMek ships no cluster.
+        var composer = CreateComposer(out var assets);
+        assets.GetPipClusterAsync(Arg.Is<string>(name => name.StartsWith("BipedIS")))
+            .Returns(Task.FromResult<Stream?>(null));
+        var data = RecordSheetDiagramData.Create(105,
+            [new KeyValuePair<ArmourRegion, int>(new ArmourRegion(PartLocation.CenterTorso, ArmourFace.Front), 10)])
+            with
+            {
+                PartStates = new Dictionary<PartLocation, RecordSheetPartData>
+                {
+                    [PartLocation.CenterTorso] = new(10, 10, 0, 0,
+                        CurrentStructure: 3, MaxStructure: 6, IsDestroyed: false, IsBlownOff: false)
+                }
+            };
+
+        var svg = await Compose(composer, data);
+
+        svg.ShouldContain("data-generated-fallback=\"internal structure\"");
+        svg.ShouldContain("opacity=\"0.5\"", Case.Insensitive,
+            "half the structure remaining should render at half opacity");
+    }
+
+    [Fact]
+    public async Task ComposeAsync_ReturnsNull_WhenStructureHasNeitherAClusterNorRowsToFallBackOn()
+    {
+        // Above 100 tons MegaMek ships no structure cluster, so the left arm falls back - and
+        // isPipsLA is an empty group with no rows to draw into.
+        var composer = CreateComposer(out var assets);
+        assets.GetPipClusterAsync(Arg.Is<string>(name => name.StartsWith("BipedIS")))
+            .Returns(Task.FromResult<Stream?>(null));
+        var data = RecordSheetSamples.LightMech with
+        {
+            Tonnage = 105,
+            PartStates = new Dictionary<PartLocation, RecordSheetPartData>
+            {
+                [PartLocation.LeftArm] = new(4, 4, 0, 0,
+                    CurrentStructure: 5, MaxStructure: 5, IsDestroyed: false, IsBlownOff: false)
+            }
+        };
+
+        var svg = await composer.ComposeAsync(data);
+
+        svg.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ComposeAsync_CarriesAncestorTransforms_OntoGeneratedPips()
+    {
+        var composer = CreateComposer(out var assets);
+        assets.GetPipClusterAsync(Arg.Is<string>(name => name.StartsWith("Armor_")))
+            .Returns(Task.FromResult<Stream?>(null));
+        assets.GetTemplateAsync(Arg.Any<string>()).Returns(_ => StreamFor(CompleteTemplate("""
+            <svg xmlns="http://www.w3.org/2000/svg" width="576" height="756" viewBox="0 0 576 756">
+              <g id="canonArmorPips"/><g id="canonStructurePips"/>
+              <g transform="translate(12,7)">
+                <g id="armorPipsCT">
+                  <rect id="armorCTRow00" x="0" y="0" width="33" height="6"/>
+                  <rect id="armorCTRow01" x="0" y="5.3" width="33" height="6"/>
+                </g>
+              </g>
+              <text id="textArmor_CT" x="10" y="20"/>
+            </svg>
+            """)));
+
+        var svg = await Compose(composer, OversizedCentreTorso());
+
+        svg.ShouldContain("transform=\"translate(12,7)\"", Case.Insensitive,
+            "generated pips sit at the root, so an ancestor transform has to be copied onto them");
+    }
+
+    /// <summary>Centre torso armour above the 51-pip cluster ceiling, which forces the fallback.</summary>
+    private static RecordSheetDiagramData OversizedCentreTorso() =>
+        RecordSheetDiagramData.Create(20,
+            [new KeyValuePair<ArmourRegion, int>(new ArmourRegion(PartLocation.CenterTorso, ArmourFace.Front), 60)]);
+
+    /// <summary>Returns the standard template with one element removed, by id.</summary>
+    private static string TemplateWithout(string id)
+    {
+        var document = System.Xml.Linq.XDocument.Parse(TemplateSvg);
+        document.Descendants()
+            .Single(element => (string?)element.Attribute("id") == id)
+            .Remove();
+        return document.ToString();
+    }
+
+    /// <summary>A stream that fails on read, standing in for a truncated or broken asset fetch.</summary>
+    private sealed class ThrowingStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new IOException("asset read failed");
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private static async Task<string> Compose(
         RecordSheetComposer composer, RecordSheetDiagramData data, byte[]? artwork = null)
     {
