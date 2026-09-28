@@ -1448,6 +1448,223 @@ public class UnitTests
     }
 
     [Fact]
+    public void FireWeapon_ShouldMarkWeaponAsFired_ForEnergyWeapon()
+    {
+        // Arrange
+        var unit = CreateTestUnit();
+        var energyWeapon = new TestWeapon("Energy Weapon", 2);
+        MountWeaponOnUnit(unit, energyWeapon, PartLocation.LeftArm, [0, 1]);
+        energyWeapon.RequiresAmmo.ShouldBeFalse();
+        energyWeapon.HasFiredThisTurn.ShouldBeFalse();
+
+        var weaponData = new ComponentData
+        {
+            Name = energyWeapon.Name,
+            Type = MakaMekComponent.MachineGun,
+            Assignments = [new LocationSlotAssignment(PartLocation.LeftArm, 0, 2)]
+        };
+
+        // Act
+        unit.FireWeapon(weaponData);
+
+        // Assert
+        energyWeapon.HasFiredThisTurn.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void FireWeapon_ShouldMarkWeaponAsFired_ForAmmoWeapon()
+    {
+        // Arrange
+        var unit = CreateTestUnit();
+        var ballisticWeapon = new TestWeapon("Ballistic Weapon", 2, WeaponType.Ballistic, MakaMekComponent.ISAmmoAC5);
+        MountWeaponOnUnit(unit, ballisticWeapon, PartLocation.LeftArm, [0, 1]);
+
+        var ammo = AmmoTests.CreateAmmo(Ac5.Definition, 10);
+        unit.Parts[PartLocation.RightArm].TryAddComponent(ammo);
+
+        var weaponData = new ComponentData
+        {
+            Name = ballisticWeapon.Name,
+            Type = MakaMekComponent.AC5,
+            Assignments = [new LocationSlotAssignment(PartLocation.LeftArm, 0, 2)]
+        };
+
+        // Act
+        unit.FireWeapon(weaponData);
+
+        // Assert
+        ballisticWeapon.HasFiredThisTurn.ShouldBeTrue();
+        ammo.RemainingShots.ShouldBe(9);
+    }
+
+    [Fact]
+    public void FireWeapon_ShouldMarkWeaponAsFired_ForAmmoWeapon_WhenNoAmmoAvailable()
+    {
+        // Arrange
+        var unit = CreateTestUnit();
+        var ballisticWeapon = new TestWeapon("Ballistic Weapon", 2, WeaponType.Ballistic, MakaMekComponent.ISAmmoAC5);
+        MountWeaponOnUnit(unit, ballisticWeapon, PartLocation.LeftArm, [0, 1]);
+
+        var weaponData = new ComponentData
+        {
+            Name = ballisticWeapon.Name,
+            Type = MakaMekComponent.AC5,
+            Assignments = [new LocationSlotAssignment(PartLocation.LeftArm, 0, 2)]
+        };
+
+        // Act
+        unit.FireWeapon(weaponData);
+
+        // Assert
+        ballisticWeapon.HasFiredThisTurn.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void FireWeapon_ShouldNotMarkWeaponAsFired_WhenWeaponDestroyed()
+    {
+        // Arrange
+        var unit = CreateTestUnit();
+        var weapon = new TestWeapon("Test Weapon", 2);
+        MountWeaponOnUnit(unit, weapon, PartLocation.LeftArm, [0, 1]);
+        weapon.Hit();
+
+        var weaponData = new ComponentData
+        {
+            Name = weapon.Name,
+            Type = MakaMekComponent.MachineGun,
+            Assignments = [new LocationSlotAssignment(PartLocation.LeftArm, 0, 2)]
+        };
+
+        // Act
+        unit.FireWeapon(weaponData);
+
+        // Assert
+        weapon.HasFiredThisTurn.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ResetTurnState_ShouldClearHasFiredThisTurn()
+    {
+        // Arrange
+        var unit = CreateTestUnit();
+        var weapon = new TestWeapon("Energy Weapon", 2);
+        MountWeaponOnUnit(unit, weapon, PartLocation.LeftArm, [0, 1]);
+        unit.FireWeapon(new ComponentData
+        {
+            Name = weapon.Name,
+            Type = MakaMekComponent.MachineGun,
+            Assignments = [new LocationSlotAssignment(PartLocation.LeftArm, 0, 2)]
+        });
+        weapon.HasFiredThisTurn.ShouldBeTrue();
+
+        // Act
+        unit.ResetTurnState();
+
+        // Assert
+        weapon.HasFiredThisTurn.ShouldBeFalse();
+        unit.GetFiredWeaponLocations().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ResetPhaseState_ShouldNotClearHasFiredThisTurn()
+    {
+        // Arrange
+        var unit = CreateTestUnit();
+        var weapon = new TestWeapon("Energy Weapon", 2);
+        MountWeaponOnUnit(unit, weapon, PartLocation.LeftArm, [0, 1]);
+        unit.FireWeapon(new ComponentData
+        {
+            Name = weapon.Name,
+            Type = MakaMekComponent.MachineGun,
+            Assignments = [new LocationSlotAssignment(PartLocation.LeftArm, 0, 2)]
+        });
+
+        // Act - a phase transition (e.g. WeaponsAttack -> WeaponAttackResolution)
+        unit.ResetPhaseState();
+
+        // Assert
+        weapon.HasFiredThisTurn.ShouldBeTrue();
+        unit.GetFiredWeaponLocations().ShouldBe([PartLocation.LeftArm]);
+    }
+
+    [Fact]
+    public void GetFiredWeaponLocations_ShouldBeEmpty_WhenNoWeaponHasFired()
+    {
+        // Arrange
+        var unit = CreateTestUnit();
+        MountWeaponOnUnit(unit, new TestWeapon("Energy Weapon", 2), PartLocation.LeftArm, [0, 1]);
+
+        // Act & Assert
+        unit.GetFiredWeaponLocations().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void GetFiredWeaponLocations_ShouldReturnDistinctLocationsOfFiredWeapons()
+    {
+        // Arrange
+        var unit = CreateTestUnit();
+        var leftArmWeapon1 = new TestWeapon("Left Arm Weapon 1", 2);
+        var leftArmWeapon2 = new TestWeapon("Left Arm Weapon 2", 2);
+        var rightArmWeapon = new TestWeapon("Right Arm Weapon", 2);
+        var headWeapon = new TestWeapon("Head Weapon", 2);
+        MountWeaponOnUnit(unit, leftArmWeapon1, PartLocation.LeftArm, [0, 1]);
+        MountWeaponOnUnit(unit, leftArmWeapon2, PartLocation.LeftArm, [2, 3]);
+        MountWeaponOnUnit(unit, rightArmWeapon, PartLocation.RightArm, [0, 1]);
+        MountWeaponOnUnit(unit, headWeapon, PartLocation.Head, [0, 1]);
+
+        // Act - fire both left arm weapons and the right arm one, leave the head weapon unfired
+        unit.FireWeapon(new ComponentData
+        {
+            Name = leftArmWeapon1.Name,
+            Type = MakaMekComponent.MachineGun,
+            Assignments = [new LocationSlotAssignment(PartLocation.LeftArm, 0, 2)]
+        });
+        unit.FireWeapon(new ComponentData
+        {
+            Name = leftArmWeapon2.Name,
+            Type = MakaMekComponent.MachineGun,
+            Assignments = [new LocationSlotAssignment(PartLocation.LeftArm, 2, 2)]
+        });
+        unit.FireWeapon(new ComponentData
+        {
+            Name = rightArmWeapon.Name,
+            Type = MakaMekComponent.MachineGun,
+            Assignments = [new LocationSlotAssignment(PartLocation.RightArm, 0, 2)]
+        });
+
+        // Assert
+        var locations = unit.GetFiredWeaponLocations();
+        locations.Count.ShouldBe(2);
+        locations.ShouldContain(PartLocation.LeftArm);
+        locations.ShouldContain(PartLocation.RightArm);
+        locations.ShouldNotContain(PartLocation.Head);
+    }
+
+    [Fact]
+    public void GetFiredWeaponLocations_ShouldReturnAllMountLocations_ForMultiLocationWeapon()
+    {
+        // Arrange - a single weapon spanning both arms
+        var unit = CreateTestUnit();
+        var splitWeapon = new TestWeapon("Split Weapon", 2);
+        unit.Parts[PartLocation.LeftArm].TryAddComponent(splitWeapon, [0]).ShouldBeTrue();
+        unit.Parts[PartLocation.RightArm].TryAddComponent(splitWeapon, [0]).ShouldBeTrue();
+
+        // Act
+        unit.FireWeapon(new ComponentData
+        {
+            Name = splitWeapon.Name,
+            Type = MakaMekComponent.MachineGun,
+            Assignments = [new LocationSlotAssignment(PartLocation.LeftArm, 0, 1)]
+        });
+
+        // Assert
+        var locations = unit.GetFiredWeaponLocations();
+        locations.Count.ShouldBe(2);
+        locations.ShouldContain(PartLocation.LeftArm);
+        locations.ShouldContain(PartLocation.RightArm);
+    }
+
+    [Fact]
     public void Deploy_WhenAlreadyDeployed_ShouldThrowException()
     {
         // Arrange

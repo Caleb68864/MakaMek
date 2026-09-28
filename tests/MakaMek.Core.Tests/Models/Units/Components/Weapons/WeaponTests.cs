@@ -93,4 +93,23 @@ public class WeaponTests
         
         sut.GetFiringArcs().ShouldBeEmpty();
     }
+
+    [Fact]
+    public void HasFiredThisTurn_ShouldFollowMarkAndResetLifecycle()
+    {
+        // Arrange
+        var sut = new TestWeapon(CreateTestWeaponDefinition(WeaponType.Energy, null));
+        sut.HasFiredThisTurn.ShouldBeFalse();
+
+        // Act & Assert - marking is idempotent
+        sut.MarkAsFired();
+        sut.HasFiredThisTurn.ShouldBeTrue();
+        sut.MarkAsFired();
+        sut.HasFiredThisTurn.ShouldBeTrue();
+
+        sut.ResetFiredState();
+        sut.HasFiredThisTurn.ShouldBeFalse();
+        sut.ResetFiredState();
+        sut.HasFiredThisTurn.ShouldBeFalse();
+    }
 }

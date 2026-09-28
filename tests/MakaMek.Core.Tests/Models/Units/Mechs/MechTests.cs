@@ -786,6 +786,25 @@ public class MechTests
         sut.DeclaredWeaponTargets.ShouldBeNull();
     }
 
+    [Fact]
+    public void ResetTurnState_ShouldClearWeaponFiredState()
+    {
+        // Arrange
+        var sut = new Mech("Test", "TST-1A", 50, CreateBasicPartsData());
+        var weapon = new MediumLaser();
+        sut.Parts[PartLocation.RightArm].TryAddComponent(weapon).ShouldBeTrue();
+        sut.FireWeapon(weapon.ToData());
+        weapon.HasFiredThisTurn.ShouldBeTrue();
+        sut.GetFiredWeaponLocations().ShouldBe([PartLocation.RightArm]);
+
+        // Act
+        sut.ResetTurnState();
+
+        // Assert
+        weapon.HasFiredThisTurn.ShouldBeFalse();
+        sut.GetFiredWeaponLocations().ShouldBeEmpty();
+    }
+
 
     [Theory]
     [InlineData(5, 8, 2)]

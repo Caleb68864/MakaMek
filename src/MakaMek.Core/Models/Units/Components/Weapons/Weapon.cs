@@ -61,6 +61,22 @@ public abstract class Weapon : Component
     /// </summary>
     public virtual bool IsAimShotCapable => true;
 
+    /// <summary>
+    /// Indicates whether this weapon has been fired during the current turn.
+    /// Server-authoritative: set when the unit fires the weapon and cleared by the unit's turn-level reset.
+    /// </summary>
+    public bool HasFiredThisTurn { get; private set; }
+
+    /// <summary>
+    /// Marks this weapon as having fired during the current turn
+    /// </summary>
+    public void MarkAsFired() => HasFiredThisTurn = true;
+
+    /// <summary>
+    /// Clears the fired-this-turn flag for this weapon
+    /// </summary>
+    public void ResetFiredState() => HasFiredThisTurn = false;
+
     public IReadOnlyList<FiringArc> GetFiringArcs()
     {
         if (FirstMountPart == null)

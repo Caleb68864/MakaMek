@@ -481,6 +481,7 @@ public abstract class Unit : IUnit
         ResetMovement();
         HasAppliedHeat = false;
         ResetWeaponsTargets();
+        ResetWeaponsFiredState();
         ClearEvents();
     }
 
@@ -513,6 +514,28 @@ public abstract class Unit : IUnit
     private void ResetWeaponsTargets()
     {
         DeclaredWeaponTargets = null;
+    }
+
+    private void ResetWeaponsFiredState()
+    {
+        foreach (var weapon in GetAllComponents<Weapon>())
+        {
+            weapon.ResetFiredState();
+        }
+    }
+
+    /// <summary>
+    /// Gets the distinct mount locations of all weapons that have fired during the current turn.
+    /// Used by physical attack rules to exclude limbs that have already fired a weapon.
+    /// </summary>
+    /// <returns>The distinct locations of every weapon with <see cref="Weapon.HasFiredThisTurn"/> set</returns>
+    public IReadOnlyList<PartLocation> GetFiredWeaponLocations()
+    {
+        return GetAllComponents<Weapon>()
+            .Where(w => w.HasFiredThisTurn)
+            .SelectMany(w => w.GetLocations())
+            .Distinct()
+            .ToList();
     }
 
     /// <summary>
@@ -845,7 +868,11 @@ public abstract class Unit : IUnit
 
         if (weapon is not { IsAvailable: true })
             return;
-        
+
+        // Mark the weapon as fired before any ammo-related early return,
+        // so energy and other non-ammo weapons are tracked too
+        weapon.MarkAsFired();
+
         // If the weapon requires ammo, find and use ammo
         if (!weapon.RequiresAmmo) return;
         // Get all available ammo of the correct type

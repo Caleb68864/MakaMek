@@ -213,6 +213,13 @@ public interface IUnit
     void AddExternalHeat(string weaponName, int heatPoints);
 
     /// <summary>
+    /// Gets the distinct mount locations of all weapons that have fired during the current turn.
+    /// Used by physical attack rules to exclude limbs that have already fired a weapon.
+    /// </summary>
+    /// <returns>The distinct locations of every weapon that has fired this turn</returns>
+    IReadOnlyList<PartLocation> GetFiredWeaponLocations();
+
+    /// <summary>
     /// Declares weapon attacks against target units
     /// </summary>
     /// <param name="weaponTargets">The weapon target data containing weapon locations, slots, and target IDs</param>
