@@ -6,11 +6,21 @@ namespace Sanet.MakaMek.Assets.Services;
 /// <summary>Looks up optional PNG artwork without logging when a unit has no illustration.</summary>
 public sealed class RecordSheetArtworkProvider : IRecordSheetArtworkProvider
 {
-    private readonly IReadOnlyList<IResourceStreamProvider> _providers;
+    private readonly Func<Task<IReadOnlyList<IResourceStreamProvider>>> _resolveProviders;
     private readonly ConcurrentDictionary<IResourceStreamProvider, Lazy<Task<IReadOnlyList<string>>>> _resourceIds = new();
 
-    public RecordSheetArtworkProvider(IEnumerable<IResourceStreamProvider> providers) =>
-        _providers = providers.ToArray();
+    public RecordSheetArtworkProvider(IEnumerable<IResourceStreamProvider> providers)
+    {
+        var fixedProviders = providers.ToArray();
+        _resolveProviders = () => Task.FromResult<IReadOnlyList<IResourceStreamProvider>>(fixedProviders);
+    }
+
+    /// <summary>
+    /// Takes its sources from the asset provider configuration, so the artwork source is configured
+    /// alongside units and hexes rather than fixed in code.
+    /// </summary>
+    public RecordSheetArtworkProvider(ConfiguredResourceProviders providers) =>
+        _resolveProviders = providers.GetAsync;
 
     public async Task<Stream?> GetMechArtworkAsync(string mechName)
     {
@@ -18,7 +28,7 @@ public sealed class RecordSheetArtworkProvider : IRecordSheetArtworkProvider
             return null;
 
         var fileName = mechName + ".png";
-        foreach (var provider in _providers)
+        foreach (var provider in await _resolveProviders())
         {
             try
             {
@@ -60,11 +70,4 @@ public sealed class RecordSheetArtworkProvider : IRecordSheetArtworkProvider
         return Uri.UnescapeDataString(fileName);
     }
 
-    public static RecordSheetArtworkProvider FromLocalCheckout(string mmDataRoot) =>
-        new([
-            new LocalFolderResourceStreamProvider(
-                Path.Combine(mmDataRoot, "data", "images", "fluff", "mech"),
-                "png",
-                "mm-data-mech-fluff")
-        ]);
 }

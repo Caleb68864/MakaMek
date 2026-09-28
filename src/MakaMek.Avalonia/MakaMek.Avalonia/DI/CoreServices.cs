@@ -46,45 +46,20 @@ public static class CoreServices
         // Factory that maps AssetProviderConfigData to concrete IResourceStreamProvider instances.
         services.AddSingleton<IResourceStreamProviderFactory, ResourceStreamProviderFactory>();
 
-        services.AddSingleton<IRecordSheetTemplateProvider>(sp =>
-        {
-            var logger = sp.GetRequiredService<ILogger<RecordSheetTemplateProvider>>();
-            var localRoot = Environment.GetEnvironmentVariable("MAKAMEK_MM_DATA_ROOT");
-            if (!string.IsNullOrWhiteSpace(localRoot))
-                return RecordSheetTemplateProvider.FromLocalCheckout(localRoot, logger);
+        // Record sheet sources come from the asset provider configuration, like units and hexes, so
+        // they can be repointed or disabled without a code change.
+        services.AddSingleton<IRecordSheetTemplateProvider>(sp => new RecordSheetTemplateProvider(
+            new ConfiguredResourceProviders(
+                sp.GetRequiredService<IAssetProviderConfigurationProvider>(),
+                sp.GetRequiredService<IResourceStreamProviderFactory>(),
+                AssetType.RecordSheetTemplates, AssetType.RecordSheetPips),
+            sp.GetRequiredService<ILogger<RecordSheetTemplateProvider>>()));
 
-            // Debug fallback for sandboxed heads, which cannot read a developer's local checkout.
-            var recordSheetsUrl = "https://api.github.com/repos/MegaMek/mm-data/contents/data/images/recordsheets";
-            var cachingService = sp.GetRequiredService<IFileCachingService>();
-            var loggerFactory = sp.GetRequiredService<ILogger<GitHubResourceStreamProvider>>();
-            var templates = new GitHubResourceStreamProvider(
-                "svg",
-                recordSheetsUrl,
-                "templates_us",
-                cachingService,
-                loggerFactory);
-            var pipClusters = new GitHubResourceStreamProvider(
-                "svg",
-                recordSheetsUrl,
-                "biped_pips",
-                cachingService,
-                loggerFactory);
-            return new RecordSheetTemplateProvider([templates, pipClusters], logger);
-        });
-
-        services.AddSingleton<IRecordSheetArtworkProvider>(sp =>
-        {
-            var localRoot = Environment.GetEnvironmentVariable("MAKAMEK_MM_DATA_ROOT");
-            if (!string.IsNullOrWhiteSpace(localRoot))
-                return RecordSheetArtworkProvider.FromLocalCheckout(localRoot);
-
-            var fluffUrl = "https://api.github.com/repos/MegaMek/mm-data/contents/data/images/fluff";
-            var cachingService = sp.GetRequiredService<IFileCachingService>();
-            var logger = sp.GetRequiredService<ILogger<GitHubResourceStreamProvider>>();
-            var mechFluff = new GitHubResourceStreamProvider(
-                "png", fluffUrl, "mech", cachingService, logger);
-            return new RecordSheetArtworkProvider([mechFluff]);
-        });
+        services.AddSingleton<IRecordSheetArtworkProvider>(sp => new RecordSheetArtworkProvider(
+            new ConfiguredResourceProviders(
+                sp.GetRequiredService<IAssetProviderConfigurationProvider>(),
+                sp.GetRequiredService<IResourceStreamProviderFactory>(),
+                AssetType.UnitFluff)));
 
         // Unit caching service — providers are resolved lazily from IAssetProviderConfigurationProvider
         // on first cache access, so users can add/remove/toggle providers in Settings and the
@@ -279,6 +254,27 @@ public static class CoreServices
                         IsDefault: true,
                         SortOrder: 0));
             }
+            // Record sheet artwork lives in MegaMek's data repository, so it is seeded as its own
+            // default provider per asset type rather than reusing the game's own data repository.
+            var recordSheetDefaults = new[]
+            {
+                ("record-sheet-templates", AssetType.RecordSheetTemplates),
+                ("record-sheet-pips", AssetType.RecordSheetPips),
+                ("unit-fluff", AssetType.UnitFluff)
+            };
+            foreach (var (id, assetType) in recordSheetDefaults)
+            {
+                defaults.Add(
+                    new AssetProviderConfigData(
+                        id,
+                        ProviderType.GitHub,
+                        assetType,
+                        MegaMekDefaults.BaseUrl,
+                        IsActive: true,
+                        IsDefault: true,
+                        SortOrder: 0));
+            }
+
             return new AssetProviderConfigurationProvider(
                 defaults,
                 cachingService,

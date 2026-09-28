@@ -12,10 +12,15 @@ public sealed class ResourceStreamProviderFactory : IResourceStreamProviderFacto
 {
     private const string UnitsExtension = "mmux";
     private const string HexesExtension = "mmtx";
+    private const string RecordSheetExtension = "svg";
+    private const string FluffExtension = "png";
     private const string UnitsManifest = "units/manifest.json";
     private const string HexesManifest = "hexes/manifest.json";
     private const string UnitsGitHubSubPath = "units/mechs";
     private const string HexesGitHubSubPath = "hexes/biomes";
+    private const string RecordSheetTemplatesSubPath = "images/recordsheets/templates_us";
+    private const string RecordSheetPipsSubPath = "images/recordsheets/biped_pips";
+    private const string UnitFluffSubPath = "images/fluff/mech";
 
     private readonly IFileCachingService _cachingService;
     private readonly ILoggerFactory _loggerFactory;
@@ -68,6 +73,8 @@ public sealed class ResourceStreamProviderFactory : IResourceStreamProviderFacto
         {
             AssetType.Units => UnitsExtension,
             AssetType.Hexes => HexesExtension,
+            AssetType.RecordSheetTemplates or AssetType.RecordSheetPips => RecordSheetExtension,
+            AssetType.UnitFluff => FluffExtension,
             _ => throw new ArgumentOutOfRangeException(nameof(assetType), assetType,
                 $"Unsupported asset type '{assetType}'.")
         };
@@ -90,6 +97,9 @@ public sealed class ResourceStreamProviderFactory : IResourceStreamProviderFacto
         {
             AssetType.Units => UnitsGitHubSubPath,
             AssetType.Hexes => HexesGitHubSubPath,
+            AssetType.RecordSheetTemplates => RecordSheetTemplatesSubPath,
+            AssetType.RecordSheetPips => RecordSheetPipsSubPath,
+            AssetType.UnitFluff => UnitFluffSubPath,
             _ => throw new ArgumentOutOfRangeException(nameof(assetType), assetType,
                 $"Unsupported asset type '{assetType}'.")
         };

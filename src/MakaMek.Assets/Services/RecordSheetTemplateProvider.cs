@@ -7,7 +7,7 @@ namespace Sanet.MakaMek.Assets.Services;
 /// <summary>Finds record sheets by file name in the existing resource-stream provider stack.</summary>
 public sealed class RecordSheetTemplateProvider : IRecordSheetTemplateProvider
 {
-    private readonly IReadOnlyList<IResourceStreamProvider> _providers;
+    private readonly Func<Task<IReadOnlyList<IResourceStreamProvider>>> _resolveProviders;
     private readonly ILogger<RecordSheetTemplateProvider> _logger;
     private readonly HashSet<string> _loggedMissing = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<IResourceStreamProvider, Lazy<Task<IReadOnlyList<string>>>> _resourceIds = new();
@@ -18,7 +18,20 @@ public sealed class RecordSheetTemplateProvider : IRecordSheetTemplateProvider
         IEnumerable<IResourceStreamProvider> providers,
         ILogger<RecordSheetTemplateProvider> logger)
     {
-        _providers = providers.ToArray();
+        var fixedProviders = providers.ToArray();
+        _resolveProviders = () => Task.FromResult<IReadOnlyList<IResourceStreamProvider>>(fixedProviders);
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Takes its sources from the asset provider configuration, so the record sheet source is
+    /// configured alongside units and hexes rather than fixed in code.
+    /// </summary>
+    public RecordSheetTemplateProvider(
+        ConfiguredResourceProviders providers,
+        ILogger<RecordSheetTemplateProvider> logger)
+    {
+        _resolveProviders = providers.GetAsync;
         _logger = logger;
     }
 
@@ -39,7 +52,7 @@ public sealed class RecordSheetTemplateProvider : IRecordSheetTemplateProvider
         if (_assetCache.TryGetValue(assetName, out var cached))
             return new MemoryStream(cached, writable: false);
 
-        foreach (var provider in _providers)
+        foreach (var provider in await _resolveProviders())
         {
             try
             {
@@ -80,17 +93,6 @@ public sealed class RecordSheetTemplateProvider : IRecordSheetTemplateProvider
         }
     }
 
-    /// <summary>Uses an unmodified mm-data checkout without a bucket or packaging step.</summary>
-    public static RecordSheetTemplateProvider FromLocalCheckout(
-        string mmDataRoot, ILogger<RecordSheetTemplateProvider> logger)
-    {
-        var recordSheets = Path.Combine(mmDataRoot, "data", "images", "recordsheets");
-        return new RecordSheetTemplateProvider(
-            [
-                new LocalFolderResourceStreamProvider(Path.Combine(recordSheets, "templates_us"), "svg", "mm-data-record-sheets"),
-                new LocalFolderResourceStreamProvider(Path.Combine(recordSheets, "biped_pips"), "svg", "mm-data-record-sheet-pips")
-            ], logger);
-    }
 
     private static string GetFileName(string id)
     {

@@ -13,5 +13,20 @@ public enum AssetType
     /// <summary>
     /// Hex/terrain data.
     /// </summary>
-    Hexes
+    Hexes,
+
+    /// <summary>
+    /// Blank record sheet templates, as SVG.
+    /// </summary>
+    RecordSheetTemplates,
+
+    /// <summary>
+    /// Armour and structure pip clusters overlaid onto a record sheet, as SVG.
+    /// </summary>
+    RecordSheetPips,
+
+    /// <summary>
+    /// Per-unit fluff artwork shown on a record sheet.
+    /// </summary>
+    UnitFluff
 }

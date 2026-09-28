@@ -281,12 +281,25 @@
             IsVisible="{Binding IsRecordSheetPanelVisible}"
             Title="{Binding SelectedUnit.Name}"
             CloseCommand="{Binding ToggleRecordSheet}">
-            <controls:UnitRecordSheet
-                Unit="{Binding ShownRecordSheetUnit}"
-                DiagramViewModel="{Binding RecordSheet}"
-                HeatProjection="{Binding SelectedUnitHeatProjection}"
-                ShowHeatLevelPanel="True"
-                ShowEventsTab="True" />
+            <Grid RowDefinitions="*,Auto">
+                <controls:UnitRecordSheet
+                    Grid.Row="0"
+                    Unit="{Binding ShownRecordSheetUnit}"
+                    DiagramViewModel="{Binding RecordSheet}"
+                    HeatProjection="{Binding SelectedUnitHeatProjection}"
+                    ShowHeatLevelPanel="True"
+                    ShowEventsTab="True" />
+
+                <!-- Export Record Sheet PDF Button -->
+                <Button Grid.Row="1"
+                        Classes="actionButtonText"
+                        IsVisible="{Binding CanExportRecordSheet}"
+                        Command="{Binding ExportRecordSheetToPdfCommand}"
+                        ToolTip.Tip="{extensions:Localize 'RecordSheet_ExportPdf'}"
+                        Background="{Binding ActivePlayerTint, Converter={StaticResource HexColorToBrushConverter}}"
+                        Foreground="{Binding ActivePlayerTint, Converter={StaticResource ContrastingForegroundConverter}}"
+                        Content="{extensions:Localize 'RecordSheet_ExportPdf'}"/>
+            </Grid>
         </templatedControls:GamePanel>
 
         <!-- Target Preview Panel -->

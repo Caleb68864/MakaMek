@@ -1230,11 +1230,18 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
         }
     });
 
-    /// <summary>Gets whether there is a record sheet that can be exported.</summary>
+    /// <summary>
+    /// Gets whether there is a record sheet that can be exported. Gated the same way as the map
+    /// export, which is debug-only while the feature settles.
+    /// </summary>
     public bool CanExportRecordSheet =>
+#if DEBUG
         _recordSheetComposer is not null && _recordSheetRasterizer is not null &&
         _pdfExportService is not null && _fileService is not null &&
         RecordSheet.DiagramData is not null;
+#else
+        false;
+#endif
 
     public bool CanExportPdf =>
 #if DEBUG
