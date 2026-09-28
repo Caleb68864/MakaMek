@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -28,6 +30,7 @@ namespace Sanet.MakaMek.Avalonia.Controls;
 public sealed class ArmourDiagram : UserControl
 {
     private const double SheetMargin = 12;
+    private const string TemplateName = "mek_biped_default.svg";
 
     public static readonly StyledProperty<RecordSheetViewModel?> ViewModelProperty =
         AvaloniaProperty.Register<ArmourDiagram, RecordSheetViewModel?>(nameof(ViewModel));
@@ -46,6 +49,14 @@ public sealed class ArmourDiagram : UserControl
     private string? _artworkCacheKey;
     private byte[]? _artworkBytes;
     private bool _artworkLookupAttempted;
+
+    // Parsed SVG kept between renders: the XML parse, not the fetch, is the cost, and the provider
+    // already caches the bytes. Keyed by content rather than asset name, so a template or cluster
+    // whose contents change is re-parsed instead of being served stale. The template is mutated
+    // while composing so callers clone it; pip clusters are only ever copied out of (see
+    // AddClusterAsync), never changed, so they are shared as-is. Do not mutate a cached document.
+    private readonly ConcurrentDictionary<string, XDocument> _documentCache = new(StringComparer.Ordinal);
+
 
     public event EventHandler<bool>? TemplateAvailabilityChanged;
 
@@ -172,7 +183,7 @@ public sealed class ArmourDiagram : UserControl
 
         try
         {
-            await using var template = await _assets.GetTemplateAsync("mek_biped_default.svg");
+            await using var template = await _assets.GetTemplateAsync(TemplateName);
             if (template is null)
             {
                 if (generation == Volatile.Read(ref _renderGeneration))
@@ -180,64 +191,31 @@ public sealed class ArmourDiagram : UserControl
                 return;
             }
 
-            var document = XDocument.Load(template);
-            var root = document.Root;
-            var armourPips = FindById(root, "canonArmorPips");
-            var structurePips = FindById(root, "canonStructurePips");
-            if (root is null || armourPips is null || structurePips is null)
+            var templateBytes = await ReadAllBytesAsync(template);
+            // Snapshot rather than letting the background work read fields off the UI thread.
+            var artwork = _artworkBytes;
+
+            // Composing the sheet and rasterising it touch no Avalonia object, so they run off the
+            // UI thread; only the finished bitmap comes back, and awaiting returns us to the UI
+            // thread through Avalonia's synchronization context.
+            var rendered = await Task.Run(() => ComposeSheetAsync(templateBytes, data, artwork));
+
+            if (generation != Volatile.Read(ref _renderGeneration))
             {
-                _logger.LogWarning("Biped record-sheet template is missing a pip overlay layer");
-                if (generation == Volatile.Read(ref _renderGeneration))
-                    SetTemplateAvailability(false);
+                rendered?.Dispose();
                 return;
             }
 
-            AddCriticalSlotSeam(root);
-            AddArtworkSeam(root);
-            var hasAllArmourPips = await AddArmourPipsAsync(document, armourPips, data);
-            var hasAllStructurePips = await AddStructurePipsAsync(document, structurePips, data);
-            if (!hasAllArmourPips || !hasAllStructurePips)
+            if (rendered is null)
             {
-                if (generation == Volatile.Read(ref _renderGeneration))
-                    SetTemplateAvailability(false);
-                return;
-            }
-            AddCriticalSlots(document, FindById(root, "criticalSlotOverlay"), data);
-            AddFluffArtwork(document, FindById(root, "recordSheetArtworkOverlay"), data, _artworkBytes);
-
-            using var svgStream = new MemoryStream();
-            using (var writer = XmlWriter.Create(svgStream, new XmlWriterSettings
-                   {
-                       Encoding = new UTF8Encoding(false),
-                       OmitXmlDeclaration = false
-                   }))
-            {
-                document.Save(writer);
-            }
-            svgStream.Position = 0;
-
-            using var svg = new SKSvg();
-            if (svg.Load(svgStream) is null)
-            {
-                _logger.LogWarning("Composed biped record-sheet SVG could not be parsed");
-                if (generation == Volatile.Read(ref _renderGeneration))
-                    SetTemplateAvailability(false);
+                SetTemplateAvailability(false);
                 return;
             }
 
-            using var png = new MemoryStream();
-            svg.Save(png, SKColors.White, SKEncodedImageFormat.Png, 100, 2f, 2f);
-            png.Position = 0;
-            var renderedBitmap = new Bitmap(png);
-            if (generation == Volatile.Read(ref _renderGeneration))
-            {
-                SetImageSource(renderedBitmap);
-                ResizeImage(Bounds.Width);
-                SetTemplateAvailability(true);
-                StartArtworkLookup(data);
-            }
-            else
-                renderedBitmap.Dispose();
+            SetImageSource(rendered);
+            ResizeImage(Bounds.Width);
+            SetTemplateAvailability(true);
+            StartArtworkLookup(data);
         }
         catch (Exception ex)
         {
@@ -245,6 +223,58 @@ public sealed class ArmourDiagram : UserControl
             if (generation == Volatile.Read(ref _renderGeneration))
                 SetTemplateAvailability(false);
         }
+    }
+
+    /// <summary>
+    /// Builds the sheet and rasterises it to a bitmap, or returns null when the assets cannot
+    /// produce one. Runs on a background thread: nothing here may touch an Avalonia object, whose
+    /// property access asserts the UI thread.
+    /// </summary>
+    private async Task<Bitmap?> ComposeSheetAsync(
+        byte[] templateBytes, RecordSheetDiagramData data, byte[]? artwork)
+    {
+        // Composition mutates the tree, so the cached parse is cloned rather than handed out.
+        var document = new XDocument(ParseCached(templateBytes));
+        var root = document.Root;
+        var armourPips = FindById(root, "canonArmorPips");
+        var structurePips = FindById(root, "canonStructurePips");
+        if (root is null || armourPips is null || structurePips is null)
+        {
+            _logger.LogWarning("Biped record-sheet template is missing a pip overlay layer");
+            return null;
+        }
+
+        AddCriticalSlotSeam(root);
+        AddArtworkSeam(root);
+        var hasAllArmourPips = await AddArmourPipsAsync(document, armourPips, data);
+        var hasAllStructurePips = await AddStructurePipsAsync(document, structurePips, data);
+        if (!hasAllArmourPips || !hasAllStructurePips) return null;
+
+        AddCriticalSlots(document, FindById(root, "criticalSlotOverlay"), data);
+        AddFluffArtwork(document, FindById(root, "recordSheetArtworkOverlay"), data, artwork);
+
+        using var svgStream = new MemoryStream();
+        using (var writer = XmlWriter.Create(svgStream, new XmlWriterSettings
+               {
+                   Encoding = new UTF8Encoding(false),
+                   OmitXmlDeclaration = false
+               }))
+        {
+            document.Save(writer);
+        }
+        svgStream.Position = 0;
+
+        using var svg = new SKSvg();
+        if (svg.Load(svgStream) is null)
+        {
+            _logger.LogWarning("Composed biped record-sheet SVG could not be parsed");
+            return null;
+        }
+
+        using var png = new MemoryStream();
+        svg.Save(png, SKColors.White, SKEncodedImageFormat.Png, 100, 2f, 2f);
+        png.Position = 0;
+        return new Bitmap(png);
     }
 
     private void SetTemplateAvailability(bool isAvailable)
@@ -517,6 +547,23 @@ public sealed class ArmourDiagram : UserControl
         return true;
     }
 
+    private static async Task<byte[]> ReadAllBytesAsync(Stream stream)
+    {
+        if (stream is MemoryStream alreadyBuffered) return alreadyBuffered.ToArray();
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer);
+        return buffer.ToArray();
+    }
+
+    /// <summary>
+    /// Returns the parsed document for these bytes, parsing only the first time they are seen.
+    /// Hashing is far cheaper than an XML parse, and keying on content means an asset that changes
+    /// is picked up rather than served from the previous render.
+    /// </summary>
+    private XDocument ParseCached(byte[] bytes) => _documentCache.GetOrAdd(
+        Convert.ToHexString(SHA256.HashData(bytes)),
+        _ => XDocument.Load(new MemoryStream(bytes, writable: false)));
+
     private static double ParseNumber(XElement element, string attribute)
     {
         TryGetNumber(element, attribute, out var value);
@@ -723,7 +770,7 @@ public sealed class ArmourDiagram : UserControl
 
         try
         {
-            var cluster = XDocument.Load(stream);
+            var cluster = ParseCached(await ReadAllBytesAsync(stream));
             var sourceSwitch = cluster.Root?.Element(SvgNamespace + "switch");
             if (sourceSwitch is null)
             {
