@@ -18,12 +18,25 @@ namespace MakaMek.Avalonia.Tests.Controls;
 public class UnitRecordSheetTests
 {
     private static readonly HeadlessUnitTestSession Session =
-        HeadlessUnitTestSession.StartNew(typeof(TestApp));
+        HeadlessUnitTestSession.StartNew(typeof(SkiaHeadlessTestSetup));
+
+    /// <summary>
+    /// Runs async work on the headless dispatcher. HeadlessUnitTestSession has no Func&lt;Task&gt;
+    /// overload, so passing an async lambda straight to Dispatch binds it as an Action - async void -
+    /// and every assertion failure inside it is swallowed. Returning a value picks the
+    /// Func&lt;Task&lt;T&gt;&gt; overload, which propagates.
+    /// </summary>
+    private static Task DispatchAsync(Func<Task> action) =>
+        Session.Dispatch(async () =>
+        {
+            await action();
+            return true;
+        }, CancellationToken.None);
 
     [Fact]
     public async Task Mech_WithAvailableTemplate_ShowsRecordSheetTab()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var assets = CreateAssets(templateAvailable: true);
             var control = CreateControl(assets);
@@ -35,13 +48,13 @@ public class UnitRecordSheetTests
 
             await assets.Received(1).GetTemplateAsync("mek_biped_default.svg");
             control.FindControl<TabItem>("RecordSheetTab")!.IsVisible.ShouldBeTrue();
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task NonMech_UsesTextTabs_WithoutRequestingDiagramAssets()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var assets = CreateAssets(templateAvailable: true);
             var control = CreateControl(assets);
@@ -55,13 +68,13 @@ public class UnitRecordSheetTests
             await assets.DidNotReceive().GetPipClusterAsync(Arg.Any<string>());
             control.FindControl<TabControl>("RecordSheetTabs")!.Items
                 .OfType<TabItem>().Count(tab => tab.IsVisible).ShouldBe(4);
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task MissingTemplate_LeavesExistingTextTabsUnchanged()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var assets = CreateAssets(templateAvailable: false);
             var control = CreateControl(assets);
@@ -75,13 +88,13 @@ public class UnitRecordSheetTests
                 .OfType<TabItem>().Count(tab => tab.IsVisible).ShouldBe(4);
             await assets.Received(1).GetTemplateAsync("mek_biped_default.svg");
             await assets.DidNotReceive().GetPipClusterAsync(Arg.Any<string>());
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task Mech_AtPhoneWidth_FitsDiagramWithoutHorizontalScrolling()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var control = CreateControl(CreateAssets(templateAvailable: true));
             control.Unit = CreateMech();
@@ -101,13 +114,13 @@ public class UnitRecordSheetTests
             scrollViewer.HorizontalScrollBarVisibility.ShouldBe(ScrollBarVisibility.Disabled);
             diagram.Bounds.Width.ShouldBe(320);
             image.Width.ShouldBe(296);
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task SelectedDiagram_WhenUnitBecomesUnavailable_ReturnsToTextTab()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var control = CreateControl(CreateAssets(templateAvailable: true));
             control.Unit = CreateMech();
@@ -120,13 +133,13 @@ public class UnitRecordSheetTests
 
             tab.IsVisible.ShouldBeFalse();
             tabs.SelectedIndex.ShouldBe(0);
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task ExternalSnapshotForAnotherUnit_HidesOldDiagramUntilMatchingSnapshotArrives()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var control = CreateControl(CreateAssets(templateAvailable: true));
             var first = CreateMech();
@@ -142,13 +155,13 @@ public class UnitRecordSheetTests
             tab.IsVisible.ShouldBeFalse();
             snapshot.SelectUnit(second);
             await WaitForAsync(() => tab.IsVisible);
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task Preview_SelectsAvailableDiagram_AndFallsBackToTextWhenItFails()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var assets = CreateAssets(templateAvailable: true);
             var control = CreateControl(assets);
@@ -167,13 +180,13 @@ public class UnitRecordSheetTests
             snapshot.Refresh();
             await WaitForAsync(() => !tab.IsVisible);
             tabs.SelectedIndex.ShouldBe(0);
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task SwitchingUnits_ImmediatelyHidesPreviousSheetWhileNextTemplateLoads()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var assets = CreateAssets(templateAvailable: true);
             var control = CreateControl(assets);
@@ -188,7 +201,7 @@ public class UnitRecordSheetTests
             tab.IsVisible.ShouldBeFalse();
             pending.SetResult(StreamFor(TemplateSvg));
             await WaitForAsync(() => tab.IsVisible);
-        }, CancellationToken.None);
+        });
     }
 
     private static UnitRecordSheet CreateControl(IRecordSheetTemplateProvider assets) =>

@@ -38,6 +38,7 @@ public sealed class ArmourDiagram : UserControl
     private readonly IRecordSheetLayout _layout;
     private readonly ILogger<ArmourDiagram> _logger;
     private readonly Image _image = new() { Stretch = Stretch.Uniform };
+    private bool _isSubscribed = true;
     private RecordSheetViewModel? _viewModel;
     private long _renderGeneration;
     private RecordSheetDiagramData? _latestData;
@@ -95,10 +96,33 @@ public sealed class ArmourDiagram : UserControl
             oldViewModel.PropertyChanged -= OnViewModelPropertyChanged;
 
         _viewModel = change.GetNewValue<RecordSheetViewModel?>();
-        if (_viewModel is not null)
+        if (_viewModel is not null && _isSubscribed)
             _viewModel.PropertyChanged += OnViewModelPropertyChanged;
 
         QueueViewModelRender(_viewModel?.DiagramData);
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        if (_isSubscribed || _viewModel is null) return;
+        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        _isSubscribed = true;
+        QueueViewModelRender(_viewModel.DiagramData);
+    }
+
+    /// <summary>
+    /// The view model outlives this control, so staying subscribed would keep the control and its
+    /// rendered sheet alive after the view is gone. The bitmap goes with it.
+    /// </summary>
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        if (_viewModel is not null)
+            _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        _isSubscribed = false;
+        Interlocked.Increment(ref _renderGeneration);
+        SetImageSource(null);
+        base.OnDetachedFromVisualTree(e);
     }
 
     public Task RenderAsync(RecordSheetDiagramData data)

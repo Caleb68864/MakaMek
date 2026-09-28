@@ -30,7 +30,7 @@ public sealed class RecordSheetViewModel : BaseViewModel
         Refresh();
     }
 
-    /// <summary>Refreshes the projection after the game applies a state-changing command.</summary>
+    /// <summary>Marks locations as freshly damaged so the diagram can highlight them.</summary>
     public void AddRecentDamage(IEnumerable<PartLocation> locations)
     {
         ArgumentNullException.ThrowIfNull(locations);
@@ -58,6 +58,10 @@ public sealed class RecordSheetViewModel : BaseViewModel
         Refresh();
     }
 
+    /// <summary>
+    /// Rebuilds the projection after the game applies a state-changing command. The result compares
+    /// structurally, so an unchanged unit raises no change and costs the diagram nothing.
+    /// </summary>
     public void Refresh() => DiagramData = Unit is null
         ? null
         : RecordSheetDiagramData.FromUnit(Unit) with

@@ -57,6 +57,57 @@ public sealed record RecordSheetDiagramData(
         new ReadOnlyDictionary<PartLocation, IReadOnlyList<RecordSheetCriticalSlotData>>(
             new Dictionary<PartLocation, IReadOnlyList<RecordSheetCriticalSlotData>>());
 
+    /// <summary>
+    /// Structural equality. The generated record equality compares the dictionaries and sets by
+    /// reference, and every projection builds fresh ones, so an unchanged sheet would always look
+    /// like a change and drive a full re-render of the diagram.
+    /// </summary>
+    public bool Equals(RecordSheetDiagramData? other)
+    {
+        if (other is null) return false;
+        if (ReferenceEquals(this, other)) return true;
+
+        return Tonnage == other.Tonnage
+               && FluffArtworkName == other.FluffArtworkName
+               && DictionariesEqual(Armour, other.Armour)
+               && DictionariesEqual(Locations, other.Locations)
+               && RecentlyDamagedLocations.SetEquals(other.RecentlyDamagedLocations)
+               && CriticalSlotsEqual(CriticalSlots, other.CriticalSlots);
+    }
+
+    public override int GetHashCode() => HashCode.Combine(
+        Tonnage, FluffArtworkName, Armour.Count, Locations.Count,
+        RecentlyDamagedLocations.Count, CriticalSlots.Count);
+
+    private static bool DictionariesEqual<TKey, TValue>(
+        IReadOnlyDictionary<TKey, TValue> left, IReadOnlyDictionary<TKey, TValue> right)
+    {
+        if (ReferenceEquals(left, right)) return true;
+        if (left.Count != right.Count) return false;
+        foreach (var (key, value) in left)
+        {
+            if (!right.TryGetValue(key, out var other)) return false;
+            if (!EqualityComparer<TValue>.Default.Equals(value, other)) return false;
+        }
+
+        return true;
+    }
+
+    private static bool CriticalSlotsEqual(
+        IReadOnlyDictionary<PartLocation, IReadOnlyList<RecordSheetCriticalSlotData>> left,
+        IReadOnlyDictionary<PartLocation, IReadOnlyList<RecordSheetCriticalSlotData>> right)
+    {
+        if (ReferenceEquals(left, right)) return true;
+        if (left.Count != right.Count) return false;
+        foreach (var (location, slots) in left)
+        {
+            if (!right.TryGetValue(location, out var otherSlots)) return false;
+            if (!slots.SequenceEqual(otherSlots)) return false;
+        }
+
+        return true;
+    }
+
     public static RecordSheetDiagramData Create(
         int tonnage,
         IEnumerable<KeyValuePair<ArmourRegion, int>> armour) =>

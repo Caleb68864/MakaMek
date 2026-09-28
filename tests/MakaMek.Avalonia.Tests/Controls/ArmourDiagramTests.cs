@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
+using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Shouldly;
@@ -20,12 +21,25 @@ namespace MakaMek.Avalonia.Tests.Controls;
 public class ArmourDiagramTests
 {
     private static readonly HeadlessUnitTestSession Session =
-        HeadlessUnitTestSession.StartNew(typeof(TestApp));
+        HeadlessUnitTestSession.StartNew(typeof(SkiaHeadlessTestSetup));
+
+    /// <summary>
+    /// Runs async work on the headless dispatcher. HeadlessUnitTestSession has no Func&lt;Task&gt;
+    /// overload, so passing an async lambda straight to Dispatch binds it as an Action - async void -
+    /// and every assertion failure inside it is swallowed. Returning a value picks the
+    /// Func&lt;Task&lt;T&gt;&gt; overload, which propagates.
+    /// </summary>
+    private static Task DispatchAsync(Func<Task> action) =>
+        Session.Dispatch(async () =>
+        {
+            await action();
+            return true;
+        }, CancellationToken.None);
 
     [Fact]
     public async Task RenderAsync_WithArmourAndStructure_RendersNonblankWholeSheet()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var assets = Substitute.For<IRecordSheetTemplateProvider>();
             assets.GetTemplateAsync("mek_biped_default.svg")
@@ -60,13 +74,13 @@ public class ArmourDiagramTests
             await assets.Received().GetPipClusterAsync("Armor_CT_47_Humanoid.svg");
             await assets.Received().GetPipClusterAsync("BipedIS20_CT.svg");
             await assets.Received().GetPipClusterAsync("BipedIS100_CT.svg");
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task RenderAsync_WithOptionalArtwork_ComposesItWithoutBlockingTheSheet()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var assets = Substitute.For<IRecordSheetTemplateProvider>();
             assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(TemplateSvg));
@@ -85,13 +99,13 @@ public class ArmourDiagramTests
             var withArtwork = control.RenderToPngBytes(900, 1200);
             withArtwork.SequenceEqual(baseline).ShouldBeFalse();
             await artwork.Received(1).GetMechArtworkAsync("TestMech TestModel");
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task RenderAsync_ArmourValueBeyondPipCoverage_GeneratesFallbackAndKeepsDiagramAvailable()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var assets = Substitute.For<IRecordSheetTemplateProvider>();
             assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(TemplateSvg));
@@ -110,13 +124,13 @@ public class ArmourDiagramTests
 
             availability.ShouldContain(true);
             await assets.Received().GetPipClusterAsync("Armor_CT_52_Humanoid.svg");
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task RenderAsync_MissingSupportedPip_MarksDiagramUnavailableForTextFallback()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var assets = Substitute.For<IRecordSheetTemplateProvider>();
             assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(TemplateSvg));
@@ -138,13 +152,13 @@ public class ArmourDiagramTests
             await control.RenderAsync(data);
 
             availability.ShouldBe([true, false]);
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task RenderAsync_WhenArtworkFetchFails_KeepsTheBaselineSheetAvailable()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var pendingArtwork = new TaskCompletionSource<Stream?>(TaskCreationOptions.RunContinuationsAsynchronously);
             var assets = Substitute.For<IRecordSheetTemplateProvider>();
@@ -166,13 +180,13 @@ public class ArmourDiagramTests
 
             control.RenderToPngBytes(900, 1200).SequenceEqual(baseline).ShouldBeTrue();
             await artwork.Received(1).GetMechArtworkAsync("TestMech TestModel");
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task ViewModelBinding_WhenClearedDuringArtworkFetch_DoesNotRestoreOldSheet()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var pendingArtwork = new TaskCompletionSource<Stream?>(TaskCreationOptions.RunContinuationsAsynchronously);
             var assets = Substitute.For<IRecordSheetTemplateProvider>();
@@ -198,13 +212,67 @@ public class ArmourDiagramTests
             await Task.Delay(50);
 
             image.Source.ShouldBeNull();
-        }, CancellationToken.None);
+        });
+    }
+
+    [Fact]
+    public async Task ViewModelBinding_AfterDetach_StopsListeningToTheViewModel()
+    {
+        await DispatchAsync(async () =>
+        {
+            var templateFetches = 0;
+            var assets = Substitute.For<IRecordSheetTemplateProvider>();
+            assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ =>
+            {
+                templateFetches++;
+                return StreamFor(TemplateSvg);
+            });
+            assets.GetPipClusterAsync(Arg.Any<string>())
+                .Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
+            var centerTorso = new CenterTorso("Center Torso", 10, 3, 6);
+            var unit = new Mech("TestMech", "TestModel", 20, [centerTorso]);
+            var viewModel = new RecordSheetViewModel();
+            viewModel.SelectUnit(unit);
+            var control = new ArmourDiagram(assets, new RecordSheetLayout(),
+                NullLogger<ArmourDiagram>.Instance) { ViewModel = viewModel };
+            var window = new Window { Width = 900, Height = 1200, Content = control };
+            window.Show();
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(50);
+            Dispatcher.UIThread.RunJobs();
+            templateFetches.ShouldBeGreaterThan(0, "the sheet renders while the control is in the tree");
+
+            // While attached, a damage refresh re-renders.
+            var attachedFetches = templateFetches;
+            centerTorso.ApplyDamage(2, HitDirection.Front);
+            viewModel.Refresh();
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(50);
+            Dispatcher.UIThread.RunJobs();
+            templateFetches.ShouldBeGreaterThan(attachedFetches, "an attached diagram follows the unit");
+
+            // The view model outlives the view, so a detached control that stayed subscribed would
+            // keep re-rendering and keep itself and its bitmap alive.
+            window.Content = null;
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            var detachedFetches = templateFetches;
+
+            centerTorso.ApplyDamage(2, HitDirection.Front);
+            viewModel.Refresh();
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(50);
+            Dispatcher.UIThread.RunJobs();
+
+            templateFetches.ShouldBe(detachedFetches, "a detached diagram must not react to the view model");
+        });
     }
 
     [Fact]
     public async Task ViewModelBinding_WhenUnitIsDamaged_RendersUpdatedValuesWithoutReselection()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var unit = Substitute.For<IUnit>();
             var centerTorso = new CenterTorso("Center Torso", 10, 3, 6);
@@ -248,13 +316,13 @@ public class ArmourDiagramTests
             viewModel.ClearRecentDamage();
             await Task.Delay(50);
             control.RenderToPngBytes(900, 1200).SequenceEqual(afterDamage).ShouldBeTrue();
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task ViewModelBinding_DamageRefresh_DoesNotRenderInsideTheChangeNotification()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var templateCalls = 0;
             var assets = Substitute.For<IRecordSheetTemplateProvider>();
@@ -277,13 +345,13 @@ public class ArmourDiagramTests
             Volatile.Read(ref templateCalls).ShouldBe(0);
             await Task.Delay(50);
             Volatile.Read(ref templateCalls).ShouldBe(1);
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task ViewModelBinding_WhenUnitIsSwitchedQuickly_OnlyLatestRenderIsDisplayed()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var firstTemplate = new TaskCompletionSource<Stream?>(TaskCreationOptions.RunContinuationsAsynchronously);
             var templateCalls = 0;
@@ -313,13 +381,13 @@ public class ArmourDiagramTests
 
             control.RenderToPngBytes(900, 1200).SequenceEqual(latestRender).ShouldBeTrue();
             viewModel.DiagramData!.Tonnage.ShouldBe(100);
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task RenderAsync_DestroyedAndBlownOffLocationsHaveDifferentMarks()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var destroyedArm = new Arm("Left Arm", PartLocation.LeftArm, 4, 4);
             destroyedArm.ApplyDamage(8, HitDirection.Front);
@@ -344,13 +412,13 @@ public class ArmourDiagramTests
             await Task.Delay(50);
 
             control.RenderToPngBytes(900, 1200).SequenceEqual(destroyedRender).ShouldBeFalse();
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task RenderAsync_CriticalSlotsDistinguishEmptyHitDestroyedAndMissingLocations()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var centerTorso = new CenterTorso("Center Torso", 10, 3, 6);
             centerTorso.Components.OfType<Gyro>().ShouldHaveSingleItem();
@@ -388,13 +456,13 @@ public class ArmourDiagramTests
             await Task.Delay(50);
             var missingHead = control.RenderToPngBytes(900, 1200);
             missingHead.SequenceEqual(intactAndEmptySlots).ShouldBeFalse();
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task RenderAsync_MissingLocationRegion_ClearsPreviousSheetForFallback()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var assets = Substitute.For<IRecordSheetTemplateProvider>();
             assets.GetTemplateAsync(Arg.Any<string>()).Returns(_ => StreamFor(TemplateSvg));
@@ -410,13 +478,13 @@ public class ArmourDiagramTests
 
             availability.ShouldBe([true, false]);
             ((Image)((Border)((ScrollViewer)control.Content!).Content!).Child!).Source.ShouldBeNull();
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task RenderAsync_LateArtworkForSameChassis_PreservesLatestDamageSnapshot()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var pendingArtwork = new TaskCompletionSource<Stream?>(TaskCreationOptions.RunContinuationsAsynchronously);
             var assets = Substitute.For<IRecordSheetTemplateProvider>();
@@ -434,13 +502,13 @@ public class ArmourDiagramTests
 
             await assets.Received().GetPipClusterAsync("Armor_CT_47_Humanoid.svg");
             await assets.DidNotReceive().GetPipClusterAsync("Armor_CT_10_Humanoid.svg");
-        }, CancellationToken.None);
+        });
     }
 
     [Fact]
     public async Task RenderAsync_StaticSample_LeavesUnpopulatedCriticalTablesBlank()
     {
-        await Session.Dispatch(async () =>
+        await DispatchAsync(async () =>
         {
             var assets = Substitute.For<IRecordSheetTemplateProvider>();
             assets.GetTemplateAsync(Arg.Any<string>()).Returns(_ => StreamFor(TemplateSvg));
@@ -452,7 +520,7 @@ public class ArmourDiagramTests
             using var bitmap = SKBitmap.Decode(png);
             bitmap!.Pixels.Count(pixel => pixel.Red > 120 && pixel.Red > pixel.Green * 1.5)
                 .ShouldBe(0);
-        }, CancellationToken.None);
+        });
     }
 
     private static Stream StreamFor(string value) => new MemoryStream(Encoding.UTF8.GetBytes(value));

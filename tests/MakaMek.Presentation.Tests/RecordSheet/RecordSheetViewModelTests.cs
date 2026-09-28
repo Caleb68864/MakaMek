@@ -54,6 +54,65 @@ public class RecordSheetViewModelTests
     }
 
     [Fact]
+    public void Refresh_RaisesNoChange_WhenNothingAboutTheUnitMoved()
+    {
+        // Every command refreshes the projection, and each refresh builds new dictionaries. Without
+        // structural equality that reads as a change and re-renders the whole sheet every time.
+        var unit = CreateMech(20, 10);
+        var viewModel = new RecordSheetViewModel();
+        viewModel.SelectUnit(unit);
+        var changes = 0;
+        viewModel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RecordSheetViewModel.DiagramData)) changes++;
+        };
+
+        viewModel.Refresh();
+        viewModel.Refresh();
+        viewModel.Refresh();
+
+        changes.ShouldBe(0, "an unchanged unit must not look like new data");
+    }
+
+    [Fact]
+    public void Refresh_RaisesChange_WhenTheUnitTakesDamage()
+    {
+        // Negative control for the test above: real change must still get through.
+        var unit = CreateMech(20, 10);
+        var viewModel = new RecordSheetViewModel();
+        viewModel.SelectUnit(unit);
+        var changes = 0;
+        viewModel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RecordSheetViewModel.DiagramData)) changes++;
+        };
+
+        unit.Parts[PartLocation.CenterTorso].ApplyDamage(4, HitDirection.Front);
+        viewModel.Refresh();
+
+        changes.ShouldBe(1);
+    }
+
+    [Fact]
+    public void DiagramData_ComparesStructurally_AcrossItsProjectedParts()
+    {
+        var unit = CreateMech(20, 10);
+        var first = RecordSheetDiagramData.FromUnit(unit);
+
+        RecordSheetDiagramData.FromUnit(unit).ShouldBe(first);
+        RecordSheetDiagramData.FromUnit(unit).GetHashCode().ShouldBe(first.GetHashCode());
+
+        // Each projected facet has to take part in the comparison, not just the armour numbers.
+        (first with { Tonnage = first.Tonnage + 5 }).ShouldNotBe(first);
+        (first with { FluffArtworkName = "other" }).ShouldNotBe(first);
+        (first with { RecentDamageLocations = new HashSet<PartLocation> { PartLocation.Head } })
+            .ShouldNotBe(first);
+
+        unit.Parts[PartLocation.LeftArm].ApplyDamage(3, HitDirection.Front);
+        RecordSheetDiagramData.FromUnit(unit).ShouldNotBe(first);
+    }
+
+    [Fact]
     public void SelectUnit_ReportsDestroyedAndBlownOffAsDistinctStates()
     {
         var unit = CreateMech(20, 10);
