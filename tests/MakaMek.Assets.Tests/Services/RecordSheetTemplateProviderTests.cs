@@ -30,6 +30,60 @@ public class RecordSheetTemplateProviderTests
         await provider.Received(1).GetResourceStream("mek_biped_default.svg");
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("mek_biped_default.png")]
+    [InlineData("../../../etc/passwd.svg")]
+    [InlineData("templates/mek_biped_default.svg")]
+    public async Task RejectsAnAssetNameThatIsNotAPlainSvgFile(string assetName)
+    {
+        // The name reaches this from a layout calculation, not from user input, but it ends up in a
+        // provider lookup - so anything with a path in it is refused rather than resolved.
+        var provider = Substitute.For<IResourceStreamProvider>();
+        var sut = new RecordSheetTemplateProvider([provider],
+            Substitute.For<ILogger<RecordSheetTemplateProvider>>());
+
+        var stream = await sut.GetTemplateAsync(assetName);
+
+        stream.ShouldBeNull();
+        await provider.DidNotReceive().GetAvailableResourceIds();
+    }
+
+    [Fact]
+    public async Task ReturnsNull_WhenNoProviderHasTheAsset()
+    {
+        var provider = Substitute.For<IResourceStreamProvider>();
+        provider.GetAvailableResourceIds().Returns(["something_else.svg"]);
+        var sut = new RecordSheetTemplateProvider([provider],
+            Substitute.For<ILogger<RecordSheetTemplateProvider>>());
+
+        var stream = await sut.GetTemplateAsync("mek_biped_default.svg");
+
+        stream.ShouldBeNull();
+        await provider.DidNotReceive().GetResourceStream(Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task FallsThroughToTheNextProvider_WhenOneThrows()
+    {
+        var broken = Substitute.For<IResourceStreamProvider>();
+        broken.Id.Returns("broken");
+        broken.GetAvailableResourceIds().Returns(["mek_biped_default.svg"]);
+        broken.GetResourceStream("mek_biped_default.svg")
+            .Returns<Task<Stream?>>(_ => throw new IOException("connection reset"));
+        var working = Substitute.For<IResourceStreamProvider>();
+        working.GetAvailableResourceIds().Returns(["mek_biped_default.svg"]);
+        working.GetResourceStream("mek_biped_default.svg").Returns(_ => new MemoryStream([9, 9]));
+        var logger = Substitute.For<ILogger<RecordSheetTemplateProvider>>();
+        var sut = new RecordSheetTemplateProvider([broken, working], logger);
+
+        await using var stream = await sut.GetTemplateAsync("mek_biped_default.svg");
+
+        stream.ShouldNotBeNull("one broken source must not lose an asset another one serves");
+        stream.ReadByte().ShouldBe(9);
+    }
+
     [Fact]
     public async Task FetchesTemplateThroughResourceProvider()
     {

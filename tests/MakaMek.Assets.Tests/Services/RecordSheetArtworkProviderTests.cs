@@ -140,4 +140,39 @@ public class RecordSheetArtworkProviderTests
         result.ShouldBeNull();
         await provider.DidNotReceive().GetAvailableResourceIds();
     }
+    [Fact]
+    public async Task ReturnsNull_WhenAProviderListsArtworkThenFailsToServeIt()
+    {
+        // Artwork is optional, so a source that lists a file and then fails on the fetch must be
+        // swallowed rather than propagated - the sheet still has to render.
+        var provider = Substitute.For<IResourceStreamProvider>();
+        provider.Id.Returns("flaky");
+        provider.GetAvailableResourceIds().Returns(["Atlas.png"]);
+        provider.GetResourceStream("Atlas.png")
+            .Returns<Task<Stream?>>(_ => throw new IOException("connection reset"));
+        var sut = new RecordSheetArtworkProvider([provider]);
+
+        var stream = await sut.GetMechArtworkAsync("Atlas");
+
+        stream.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task FallsThroughToTheNextProvider_WhenOneFailsToServeArtwork()
+    {
+        var broken = Substitute.For<IResourceStreamProvider>();
+        broken.GetAvailableResourceIds().Returns(["Atlas.png"]);
+        broken.GetResourceStream("Atlas.png")
+            .Returns<Task<Stream?>>(_ => throw new IOException("connection reset"));
+        var working = Substitute.For<IResourceStreamProvider>();
+        working.GetAvailableResourceIds().Returns(["Atlas.png"]);
+        working.GetResourceStream("Atlas.png").Returns(_ => new MemoryStream([7]));
+        var sut = new RecordSheetArtworkProvider([broken, working]);
+
+        await using var stream = await sut.GetMechArtworkAsync("Atlas");
+
+        stream.ShouldNotBeNull();
+        stream.ReadByte().ShouldBe(7);
+    }
+
 }
