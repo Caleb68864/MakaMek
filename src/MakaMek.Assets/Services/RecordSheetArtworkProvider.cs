@@ -27,14 +27,12 @@ public sealed class RecordSheetArtworkProvider : IRecordSheetArtworkProvider
         if (string.IsNullOrWhiteSpace(mechName) || Path.GetFileName(mechName) != mechName)
             return null;
 
-        var fileName = mechName + ".png";
         foreach (var provider in await _resolveProviders())
         {
             try
             {
                 var ids = await GetResourceIdsAsync(provider);
-                var id = ids.FirstOrDefault(candidate =>
-                    string.Equals(GetFileName(candidate), fileName, StringComparison.OrdinalIgnoreCase));
+                var id = FindArtwork(ids, mechName);
                 if (id is null) continue;
 
                 var stream = await provider.GetResourceStream(id);
@@ -62,6 +60,28 @@ public sealed class RecordSheetArtworkProvider : IRecordSheetArtworkProvider
             _resourceIds.TryRemove(
                 new KeyValuePair<IResourceStreamProvider, Lazy<Task<IReadOnlyList<string>>>>(provider, pending));
         return ids;
+    }
+
+    /// <summary>
+    /// Finds a unit's artwork, most specific first. Upstream art is filed by chassis, with variants
+    /// distinguished by an underscore - "Atlas.png", "Atlas_7A.png" - so a name like "Atlas AS7-D"
+    /// is tried verbatim, then with its separator as an underscore, then as the chassis alone.
+    /// </summary>
+    private static string? FindArtwork(IReadOnlyList<string> ids, string mechName)
+    {
+        var chassis = mechName.Split(' ', 2)[0];
+        string[] candidates = mechName == chassis
+            ? [$"{mechName}.png"]
+            : [$"{mechName}.png", $"{mechName.Replace(' ', '_')}.png", $"{chassis}.png"];
+
+        foreach (var candidate in candidates)
+        {
+            var id = ids.FirstOrDefault(existing =>
+                string.Equals(GetFileName(existing), candidate, StringComparison.OrdinalIgnoreCase));
+            if (id is not null) return id;
+        }
+
+        return null;
     }
 
     private static async Task<IReadOnlyList<string>> LoadResourceIdsAsync(IResourceStreamProvider provider)

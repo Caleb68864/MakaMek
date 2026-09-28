@@ -95,7 +95,7 @@ public class ResourceStreamProviderFactoryTests
     [Theory]
     [InlineData(AssetType.RecordSheetTemplates, "svg", "images/recordsheets/templates_us")]
     [InlineData(AssetType.RecordSheetPips, "svg", "images/recordsheets/biped_pips")]
-    [InlineData(AssetType.UnitFluff, "png", "images/fluff/mech")]
+    [InlineData(AssetType.UnitFluff, "png", "images/units/meks")]
     public void Create_GitHubRecordSheetAssets_UseTheirOwnExtensionAndSubfolder(
         AssetType assetType, string extension, string subPath)
     {

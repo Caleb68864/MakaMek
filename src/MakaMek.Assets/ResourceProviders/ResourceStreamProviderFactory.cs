@@ -20,7 +20,7 @@ public sealed class ResourceStreamProviderFactory : IResourceStreamProviderFacto
     private const string HexesGitHubSubPath = "hexes/biomes";
     private const string RecordSheetTemplatesSubPath = "images/recordsheets/templates_us";
     private const string RecordSheetPipsSubPath = "images/recordsheets/biped_pips";
-    private const string UnitFluffSubPath = "images/fluff/mech";
+    private const string UnitFluffSubPath = "images/units/meks";
 
     private readonly IFileCachingService _cachingService;
     private readonly ILoggerFactory _loggerFactory;

@@ -79,6 +79,40 @@ public class RecordSheetArtworkProviderTests
         (await sut.GetMechArtworkAsync("Atlas AS7-D")).ShouldBeNull();
     }
 
+    [Theory]
+    // Upstream files a unit's art by chassis, with variants separated by an underscore, so a
+    // "Chassis Model" name has to be matched against all three shapes it might be filed under.
+    [InlineData("Atlas AS7-D", "Atlas_AS7-D.png")]
+    [InlineData("Atlas AS7-D", "Atlas.png")]
+    [InlineData("Atlas", "Atlas.png")]
+    public async Task GetMechArtworkAsync_MatchesHowUpstreamFilesArtwork(string mechName, string fileName)
+    {
+        var provider = Substitute.For<IResourceStreamProvider>();
+        provider.GetAvailableResourceIds().Returns([fileName]);
+        provider.GetResourceStream(fileName).Returns(_ => new MemoryStream(Encoding.UTF8.GetBytes("png")));
+        var sut = new RecordSheetArtworkProvider([provider]);
+
+        await using var result = await sut.GetMechArtworkAsync(mechName);
+
+        result.ShouldNotBeNull($"{mechName} should resolve to {fileName}");
+    }
+
+    [Fact]
+    public async Task GetMechArtworkAsync_PrefersTheVariantOverTheChassis()
+    {
+        var provider = Substitute.For<IResourceStreamProvider>();
+        provider.GetAvailableResourceIds().Returns(["Atlas.png", "Atlas_AS7-D.png"]);
+        provider.GetResourceStream(Arg.Any<string>())
+            .Returns(_ => new MemoryStream(Encoding.UTF8.GetBytes("png")));
+        var sut = new RecordSheetArtworkProvider([provider]);
+
+        await using var result = await sut.GetMechArtworkAsync("Atlas AS7-D");
+
+        result.ShouldNotBeNull();
+        await provider.Received(1).GetResourceStream("Atlas_AS7-D.png");
+        await provider.DidNotReceive().GetResourceStream("Atlas.png");
+    }
+
     [Fact]
     public async Task GetMechArtworkAsync_WhenNoMatchingImageExists_ReturnsNull()
     {
