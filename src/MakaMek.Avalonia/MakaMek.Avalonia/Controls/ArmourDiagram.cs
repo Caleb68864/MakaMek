@@ -42,6 +42,7 @@ public sealed class ArmourDiagram : UserControl
     private bool _isSubscribed = true;
     private RecordSheetViewModel? _viewModel;
     private long _renderGeneration;
+    private int _rendersInFlight;
     private RecordSheetDiagramData? _latestData;
     private bool _isTemplateAvailable;
     private string? _artworkCacheKey;
@@ -151,9 +152,30 @@ public sealed class ArmourDiagram : UserControl
         }, DispatcherPriority.Background);
     }
 
+    /// <summary>
+    /// Whether a render is under way. Composition and rasterisation happen on a background thread,
+    /// so there is otherwise no way for a caller - a test, in practice - to know when the sheet has
+    /// settled, and waiting on a fixed delay is both slow and unreliable.
+    /// </summary>
+    internal bool IsRendering => Volatile.Read(ref _rendersInFlight) > 0;
+
     private async Task RenderCoreAsync(RecordSheetDiagramData? data, long generation)
     {
         if (generation != Volatile.Read(ref _renderGeneration)) return;
+
+        Interlocked.Increment(ref _rendersInFlight);
+        try
+        {
+            await RenderSheetAsync(data, generation);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _rendersInFlight);
+        }
+    }
+
+    private async Task RenderSheetAsync(RecordSheetDiagramData? data, long generation)
+    {
         if (data is null)
         {
             _artworkCacheKey = null;

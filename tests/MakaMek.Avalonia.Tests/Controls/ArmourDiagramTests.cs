@@ -100,7 +100,7 @@ public class ArmourDiagramTests
             var baseline = await CaptureAsync(window, control);
 
             pendingArtwork.SetResult(PngFor(SKColors.Red));
-            await SettleAsync(window);
+            await SettleForNegativeAsync(window);
 
             var withArtwork = await CaptureAsync(window, control);
             withArtwork.SequenceEqual(baseline).ShouldBeFalse();
@@ -211,13 +211,13 @@ public class ArmourDiagramTests
             await artwork.Received(1).GetMechArtworkAsync("TestMech TestModel");
 
             viewModel.SelectUnit(null);
-            await SettleAsync(window);
+            await SettleAsync(window, () => !control.IsRendering);
             var image = (Image)((Border)((ScrollViewer)control.Content!).Content!).Child!;
             image.Source.ShouldBeNull();
 
             // The artwork lands after the unit was cleared, and must not bring the old sheet back.
             pendingArtwork.SetResult(PngFor(SKColors.Red));
-            await SettleAsync(window);
+            await SettleForNegativeAsync(window);
 
             image.Source.ShouldBeNull();
         });
@@ -407,7 +407,7 @@ public class ArmourDiagramTests
 
             // The first template finally arrives, superseded; it must not replace what is shown.
             firstTemplate.SetResult(StreamFor(TemplateSvg));
-            await SettleAsync(window);
+            await SettleForNegativeAsync(window);
 
             (await CaptureAsync(window, control)).SequenceEqual(latestRender).ShouldBeTrue();
             viewModel.DiagramData!.Tonnage.ShouldBe(100);
@@ -596,14 +596,20 @@ public class ArmourDiagramTests
     private static async Task<byte[]> CaptureAsync(Window window, Control control,
         int width = 900, int height = 1200)
     {
-        var image = control is ArmourDiagram diagram
-            ? (Image)((Border)((ScrollViewer)diagram.Content!).Content!).Child!
-            : null;
-        var before = image?.Source;
-        await SettleAsync(window, image is null ? null : () => !ReferenceEquals(image.Source, before));
+        // Wait for the render to finish rather than for a guessed side effect: a render that
+        // legitimately leaves the sheet unchanged would never satisfy an "image changed" condition,
+        // so such a wait burns its whole budget before every capture.
+        if (control is ArmourDiagram diagram)
+            await SettleAsync(window, () => !diagram.IsRendering);
         await SettleAsync(window, rounds: 3);
         return CapturePng(window, control, width, height);
     }
+
+    /// <summary>
+    /// Waits long enough that a render would have landed if one were coming, for the assertions
+    /// that something did NOT happen. Bounded deliberately: there is no signal to wait for.
+    /// </summary>
+    private static Task SettleForNegativeAsync(Window window) => SettleAsync(window, rounds: 25);
 
     private static byte[] CapturePng(Window window, Control control, int width = 900, int height = 1200)
     {
