@@ -35,6 +35,7 @@ using Sanet.MakaMek.Map.Models.Highlights;
 using Sanet.MakaMek.Map.Models.MovementCosts;
 using Sanet.MakaMek.Map.Models.Terrains;
 using Sanet.MakaMek.Map.Services;
+using Sanet.MakaMek.Presentation.RecordSheet;
 using Sanet.MakaMek.Presentation.UiStates;
 using Sanet.MakaMek.Presentation.ViewModels;
 using Sanet.MakaMek.Presentation.ViewModels.Wrappers;
@@ -3599,6 +3600,92 @@ public class BattleMapViewModelTests
         _sut.CanExportPdf.ShouldBeFalse();
 #endif
     }
+
+    [Fact]
+    public async Task ExportRecordSheetToPdfCommand_ComposesRasterisesAndSaves()
+    {
+        var pdfService = Substitute.For<IPdfExportService>();
+        var fileService = Substitute.For<IFileService>();
+        var composer = Substitute.For<IRecordSheetComposer>();
+        var rasterizer = Substitute.For<IRecordSheetRasterizer>();
+        var svg = new byte[] { 1, 2, 3 };
+        var png = new byte[] { 4, 5, 6 };
+        var pdf = new byte[] { 7, 8, 9 };
+        composer.ComposeAsync(Arg.Any<RecordSheetDiagramData>(), Arg.Any<byte[]?>()).Returns(svg);
+        // 1200x1500 drawn at 2x is a 600x750px sheet, which is 450x562 points.
+        rasterizer.RasterizeToPng(svg, Arg.Any<float>()).Returns(new RecordSheetImage(png, 1200, 1500, 2f));
+        pdfService.GeneratePdfFromPngAsync(png, 450, 562).Returns(pdf);
+        var sut = CreateExportViewModel(pdfService, fileService, composer, rasterizer);
+        sut.RecordSheet.SelectUnit(CreateExportMech());
+        _localizationService.GetString("RecordSheet_ExportPdfDialogTitle").Returns("Export Record Sheet");
+
+        await sut.ExportRecordSheetToPdfCommand.ExecuteAsync();
+
+        await pdfService.Received(1).GeneratePdfFromPngAsync(png, 450, 562);
+        await fileService.Received(1).SaveBinaryFile(
+            "Export Record Sheet", "record-sheet.pdf", pdf, "pdf", "PDF files");
+    }
+
+    [Fact]
+    public async Task ExportRecordSheetToPdfCommand_DoesNothing_WhenNoSheetIsShown()
+    {
+        var pdfService = Substitute.For<IPdfExportService>();
+        var composer = Substitute.For<IRecordSheetComposer>();
+        var sut = CreateExportViewModel(pdfService, Substitute.For<IFileService>(), composer,
+            Substitute.For<IRecordSheetRasterizer>());
+
+        sut.CanExportRecordSheet.ShouldBeFalse("no unit is selected");
+        await sut.ExportRecordSheetToPdfCommand.ExecuteAsync();
+
+        await composer.DidNotReceive().ComposeAsync(Arg.Any<RecordSheetDiagramData>(), Arg.Any<byte[]?>());
+        await pdfService.DidNotReceive().GeneratePdfFromPngAsync(Arg.Any<byte[]>(), Arg.Any<int>(), Arg.Any<int>());
+    }
+
+    [Fact]
+    public async Task ExportRecordSheetToPdfCommand_DoesNothing_WhenTheSheetCannotBeComposed()
+    {
+        var pdfService = Substitute.For<IPdfExportService>();
+        var composer = Substitute.For<IRecordSheetComposer>();
+        composer.ComposeAsync(Arg.Any<RecordSheetDiagramData>(), Arg.Any<byte[]?>())
+            .Returns((byte[]?)null);
+        var sut = CreateExportViewModel(pdfService, Substitute.For<IFileService>(), composer,
+            Substitute.For<IRecordSheetRasterizer>());
+        sut.RecordSheet.SelectUnit(CreateExportMech());
+
+        await sut.ExportRecordSheetToPdfCommand.ExecuteAsync();
+
+        await pdfService.DidNotReceive().GeneratePdfFromPngAsync(Arg.Any<byte[]>(), Arg.Any<int>(), Arg.Any<int>());
+    }
+
+    [Fact]
+    public async Task ExportRecordSheetToPdfCommand_DoesNothing_WithoutTheServicesItNeeds()
+    {
+        var composer = Substitute.For<IRecordSheetComposer>();
+        var sut = CreateExportViewModel(null, null, composer, Substitute.For<IRecordSheetRasterizer>());
+        sut.RecordSheet.SelectUnit(CreateExportMech());
+
+        sut.CanExportRecordSheet.ShouldBeFalse();
+        await Should.NotThrowAsync(sut.ExportRecordSheetToPdfCommand.ExecuteAsync());
+
+        await composer.DidNotReceive().ComposeAsync(Arg.Any<RecordSheetDiagramData>(), Arg.Any<byte[]?>());
+    }
+
+    private BattleMapViewModel CreateExportViewModel(
+        IPdfExportService? pdfService, IFileService? fileService,
+        IRecordSheetComposer? composer, IRecordSheetRasterizer? rasterizer) =>
+        new(Substitute.For<IImageService>(),
+            Substitute.For<ITerrainAssetService>(),
+            _localizationService,
+            Substitute.For<IDispatcherService>(),
+            Substitute.For<IRulesProvider>(),
+            Substitute.For<IPlatformService>(),
+            pdfService,
+            fileService,
+            recordSheetComposer: composer,
+            recordSheetRasterizer: rasterizer);
+
+    private static Mech CreateExportMech() =>
+        new("Test", "Export", 20, [new CenterTorso("Center Torso", 10, 3, 6)]);
 
     [Fact]
     public async Task ExportMapToPdfCommand_DoesNothing_WhenCaptureMapIsNull()

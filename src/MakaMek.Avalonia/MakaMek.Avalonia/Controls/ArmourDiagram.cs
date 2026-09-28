@@ -185,8 +185,8 @@ public sealed class ArmourDiagram : UserControl
             {
                 var svg = await _composer.ComposeAsync(data, artwork);
                 if (svg is null) return null;
-                var png = _rasterizer.RasterizeToPng(svg);
-                return png is null ? null : new Bitmap(new MemoryStream(png, writable: false));
+                var image = _rasterizer.RasterizeToPng(svg);
+                return image is null ? null : new Bitmap(new MemoryStream(image.PngBytes, writable: false));
             });
 
             if (generation != Volatile.Read(ref _renderGeneration))

@@ -352,6 +352,8 @@ public class FakeLocalizationService : ILocalizationService
         ["BattleMap_ShowHexHighlightText"] = "Show Hex Highlight Text",
         ["BattleMap_ExportPdf"] = "Export Map as PDF",
         ["BattleMap_ExportPdfDialogTitle"] = "Export Map as PDF",
+        ["RecordSheet_ExportPdf"] = "Export Record Sheet as PDF",
+        ["RecordSheet_ExportPdfDialogTitle"] = "Export Record Sheet as PDF",
         ["UnitBasicInfo_TurnIndicator"] = "T",
         ["UnitComponents_Component"] = "Component",
         ["UnitComponents_Slots"] = "Slots",

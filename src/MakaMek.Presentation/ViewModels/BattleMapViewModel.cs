@@ -51,6 +51,8 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
     private readonly IPlatformService _platformService;
     private readonly IPdfExportService? _pdfExportService;
     private readonly IFileService? _fileService;
+    private readonly IRecordSheetComposer? _recordSheetComposer;
+    private readonly IRecordSheetRasterizer? _recordSheetRasterizer;
     private List<UiEventViewModel> _selectedUnitEvents = [];
     private readonly PropertyChangedEventHandler? _hexConfigurationChangedHandler;
     private IUnit? _resolutionTargetUnit;
@@ -165,7 +167,9 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
         IFileService? fileService = null,
         ITerrainBitmaskService? terrainBitmaskService = null,
         ICommandPublisher? commandPublisher = null,
-        ILogger? connectionLogger = null)
+        ILogger? connectionLogger = null,
+        IRecordSheetComposer? recordSheetComposer = null,
+        IRecordSheetRasterizer? recordSheetRasterizer = null)
     {
         ImageService = imageService;
         TerrainAssetService = terrainAssetService;
@@ -175,6 +179,8 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
         _platformService = platformService;
         _pdfExportService = pdfExportService;
         _fileService = fileService;
+        _recordSheetComposer = recordSheetComposer;
+        _recordSheetRasterizer = recordSheetRasterizer;
         CurrentState = new IdleState();
         HideBodyPartSelectorCommand = new AsyncCommand(() =>
         {
@@ -1185,6 +1191,50 @@ public class BattleMapViewModel : BaseViewModel, IDisposable
             Game?.Logger.LogError(ex, "PDF map export failed");
         }
     });
+
+    /// <summary>
+    /// Exports the record sheet currently on show to PDF, reusing the same seam as the map export.
+    /// Composition and rasterisation are the diagram's own, so the exported sheet is the one the
+    /// player is looking at rather than a second rendering of it.
+    /// </summary>
+    public IAsyncCommand ExportRecordSheetToPdfCommand => field ??= new AsyncCommand(async () =>
+    {
+        if (_recordSheetComposer is null || _recordSheetRasterizer is null ||
+            _pdfExportService is null || _fileService is null) return;
+        if (RecordSheet.DiagramData is not { } data) return;
+
+        try
+        {
+            var svg = await _recordSheetComposer.ComposeAsync(data);
+            if (svg is null) return;
+
+            var image = _recordSheetRasterizer.RasterizeToPng(svg);
+            if (image is null || image.PngBytes.Length == 0) return;
+
+            // The sheet is drawn oversized for a crisp image, so the page is its natural size.
+            var widthPoints = (int)(image.WidthPixels / image.Scale * 72 / 96);
+            var heightPoints = (int)(image.HeightPixels / image.Scale * 72 / 96);
+            var pdfBytes = await _pdfExportService.GeneratePdfFromPngAsync(
+                image.PngBytes, widthPoints, heightPoints);
+
+            await _fileService.SaveBinaryFile(
+                _localizationService.GetString("RecordSheet_ExportPdfDialogTitle"),
+                "record-sheet.pdf",
+                pdfBytes,
+                "pdf",
+                "PDF files");
+        }
+        catch (Exception ex)
+        {
+            Game?.Logger.LogError(ex, "PDF record sheet export failed");
+        }
+    });
+
+    /// <summary>Gets whether there is a record sheet that can be exported.</summary>
+    public bool CanExportRecordSheet =>
+        _recordSheetComposer is not null && _recordSheetRasterizer is not null &&
+        _pdfExportService is not null && _fileService is not null &&
+        RecordSheet.DiagramData is not null;
 
     public bool CanExportPdf =>
 #if DEBUG

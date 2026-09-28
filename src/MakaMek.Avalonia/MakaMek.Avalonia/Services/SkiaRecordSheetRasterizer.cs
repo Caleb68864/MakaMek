@@ -18,7 +18,7 @@ public sealed class SkiaRecordSheetRasterizer : IRecordSheetRasterizer
     public SkiaRecordSheetRasterizer(ILogger<SkiaRecordSheetRasterizer> logger) => _logger = logger;
 
     /// <inheritdoc />
-    public byte[]? RasterizeToPng(byte[] svgBytes, float scale = 2f)
+    public RecordSheetImage? RasterizeToPng(byte[] svgBytes, float scale = 2f)
     {
         ArgumentNullException.ThrowIfNull(svgBytes);
 
@@ -30,8 +30,19 @@ public sealed class SkiaRecordSheetRasterizer : IRecordSheetRasterizer
             return null;
         }
 
+        var bounds = drawing.Picture?.CullRect ?? SKRect.Empty;
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+        {
+            _logger.LogWarning("Composed biped record-sheet SVG has no drawable area");
+            return null;
+        }
+
         using var png = new MemoryStream();
         drawing.Save(png, SKColors.White, SKEncodedImageFormat.Png, 100, scale, scale);
-        return png.ToArray();
+        return new RecordSheetImage(
+            png.ToArray(),
+            (int)Math.Round(bounds.Width * scale),
+            (int)Math.Round(bounds.Height * scale),
+            scale);
     }
 }
