@@ -62,8 +62,8 @@ public partial class UnitRecordSheet : UserControl
         set => SetValue(PreferDiagramProperty, value);
     }
 
-    private readonly IRecordSheetTemplateProvider? _recordSheetAssets;
-    private readonly IRecordSheetLayout? _recordSheetLayout;
+    private readonly IRecordSheetComposer? _recordSheetComposer;
+    private readonly IRecordSheetRasterizer? _recordSheetRasterizer;
     private readonly IRecordSheetArtworkProvider? _recordSheetArtworkProvider;
     private readonly ILogger<ArmourDiagram>? _diagramLogger;
     private RecordSheetViewModel? _localDiagramViewModel;
@@ -141,8 +141,8 @@ public partial class UnitRecordSheet : UserControl
     {
         if (Application.Current is App app && app.ServiceProvider is { } services)
         {
-            _recordSheetAssets = services.GetService<IRecordSheetTemplateProvider>();
-            _recordSheetLayout = services.GetService<IRecordSheetLayout>();
+            _recordSheetComposer = services.GetService<IRecordSheetComposer>();
+            _recordSheetRasterizer = services.GetService<IRecordSheetRasterizer>();
             _recordSheetArtworkProvider = services.GetService<IRecordSheetArtworkProvider>();
             _diagramLogger = services.GetService<ILogger<ArmourDiagram>>();
         }
@@ -151,21 +151,21 @@ public partial class UnitRecordSheet : UserControl
     }
 
     public UnitRecordSheet(
-        IRecordSheetTemplateProvider? recordSheetAssets,
-        IRecordSheetLayout? recordSheetLayout,
+        IRecordSheetComposer? recordSheetComposer,
+        IRecordSheetRasterizer? recordSheetRasterizer,
         ILogger<ArmourDiagram>? diagramLogger)
-        : this(recordSheetAssets, recordSheetLayout, diagramLogger, null)
+        : this(recordSheetComposer, recordSheetRasterizer, diagramLogger, null)
     {
     }
 
     public UnitRecordSheet(
-        IRecordSheetTemplateProvider? recordSheetAssets,
-        IRecordSheetLayout? recordSheetLayout,
+        IRecordSheetComposer? recordSheetComposer,
+        IRecordSheetRasterizer? recordSheetRasterizer,
         ILogger<ArmourDiagram>? diagramLogger,
         IRecordSheetArtworkProvider? recordSheetArtworkProvider)
     {
-        _recordSheetAssets = recordSheetAssets;
-        _recordSheetLayout = recordSheetLayout;
+        _recordSheetComposer = recordSheetComposer;
+        _recordSheetRasterizer = recordSheetRasterizer;
         _diagramLogger = diagramLogger;
         _recordSheetArtworkProvider = recordSheetArtworkProvider;
         InitializeComponent();
@@ -246,7 +246,7 @@ public partial class UnitRecordSheet : UserControl
             return;
         }
 
-        if (_recordSheetAssets is null || _recordSheetLayout is null || _diagramLogger is null)
+        if (_recordSheetComposer is null || _recordSheetRasterizer is null || _diagramLogger is null)
         {
             SetDiagramAvailability(false);
             return;
@@ -276,7 +276,7 @@ public partial class UnitRecordSheet : UserControl
     private ArmourDiagram CreateArmourDiagram()
     {
         var diagram = new ArmourDiagram(
-            _recordSheetAssets!, _recordSheetLayout!, _diagramLogger!, _recordSheetArtworkProvider);
+            _recordSheetComposer!, _recordSheetRasterizer!, _diagramLogger!, _recordSheetArtworkProvider);
         diagram.TemplateAvailabilityChanged += OnTemplateAvailabilityChanged;
         RecordSheetDiagramHost.Children.Add(diagram);
         return diagram;

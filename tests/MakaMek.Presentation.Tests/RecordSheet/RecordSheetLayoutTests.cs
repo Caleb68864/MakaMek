@@ -62,6 +62,56 @@ public class RecordSheetLayoutTests
     }
 
     [Fact]
+    public void EveryLocationAndFaceIsMapped_OrDeliberatelyUnmapped()
+    {
+        // Walks every enum value so each arm of the region and cluster switches is exercised
+        // rather than only the handful a composed sheet happens to touch.
+        var layout = new RecordSheetLayout();
+
+        foreach (var location in Enum.GetValues<PartLocation>())
+        {
+            foreach (var face in Enum.GetValues<ArmourFace>())
+            {
+                var region = layout.TemplateRegionId(location, face);
+                var cluster = layout.ArmourClusterName(location, face, 4);
+
+                if (region is null)
+                {
+                    cluster.ShouldBeNull($"{location}/{face} has no region, so it can have no cluster");
+                    continue;
+                }
+
+                region.ShouldStartWith("armorPips");
+                cluster.ShouldNotBeNull($"{location}/{face} has a region, so it needs a cluster");
+            }
+
+            // Structure is front-only, and every location that has one names both parts.
+            var structureRegion = layout.StructureRegionId(location);
+            if (structureRegion is not null)
+            {
+                structureRegion.ShouldStartWith("isPips");
+                layout.StructureClusterName(location, 20).ShouldNotBeNull();
+            }
+        }
+    }
+
+    [Fact]
+    public void AnUnrecognisedLocationMapsToNothing_RatherThanThrowing()
+    {
+        // The switches cover every PartLocation, so their default arms are only reachable through a
+        // value outside the enum - which is exactly what a new location would look like here.
+        var layout = new RecordSheetLayout();
+        const PartLocation unknown = (PartLocation)999;
+
+        layout.TemplateRegionId(unknown, ArmourFace.Front).ShouldBeNull();
+        layout.TemplateRegionId(unknown, ArmourFace.Rear).ShouldBeNull();
+        layout.ArmourClusterName(unknown, ArmourFace.Front, 4).ShouldBeNull();
+        layout.StructureRegionId(unknown).ShouldBeNull();
+        layout.StructureClusterName(unknown, 20).ShouldBeNull();
+        layout.CriticalSlotRegionId(unknown).ShouldBeNull();
+    }
+
+    [Fact]
     public void ZeroArmourHasNoCluster()
     {
         _sut.ArmourClusterName(PartLocation.CenterTorso, ArmourFace.Front, 0).ShouldBeNull();

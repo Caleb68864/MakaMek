@@ -40,6 +40,8 @@ public static class CoreServices
     public static void RegisterServices(this IServiceCollection services)
     {
         services.AddSingleton<IRecordSheetLayout, RecordSheetLayout>();
+        services.AddSingleton<IRecordSheetComposer, RecordSheetComposer>();
+        services.AddSingleton<IRecordSheetRasterizer, SkiaRecordSheetRasterizer>();
 
         // Factory that maps AssetProviderConfigData to concrete IResourceStreamProvider instances.
         services.AddSingleton<IResourceStreamProviderFactory, ResourceStreamProviderFactory>();

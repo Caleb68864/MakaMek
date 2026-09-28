@@ -12,6 +12,7 @@ using Sanet.MakaMek.Assets.Services;
 using Sanet.MakaMek.Core.Data.Game;
 using Sanet.MakaMek.Core.Models.Units;
 using Sanet.MakaMek.Core.Models.Units.Mechs;
+using Sanet.MakaMek.Avalonia.Services;
 using Sanet.MakaMek.Presentation.RecordSheet;
 using Shouldly;
 
@@ -211,7 +212,10 @@ public class UnitRecordSheetTests
     }
 
     private static UnitRecordSheet CreateControl(IRecordSheetTemplateProvider assets) =>
-        new(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
+        new(new RecordSheetComposer(assets, new RecordSheetLayout(),
+                NullLogger<RecordSheetComposer>.Instance),
+            new SkiaRecordSheetRasterizer(NullLogger<SkiaRecordSheetRasterizer>.Instance),
+            NullLogger<ArmourDiagram>.Instance);
 
     private static IRecordSheetTemplateProvider CreateAssets(bool templateAvailable)
     {

@@ -15,6 +15,7 @@ using Sanet.MakaMek.Assets.Services;
 using Sanet.MakaMek.Core.Models.Units;
 using Sanet.MakaMek.Core.Models.Units.Mechs;
 using Sanet.MakaMek.Core.Models.Units.Components.Internal;
+using Sanet.MakaMek.Avalonia.Services;
 using Sanet.MakaMek.Presentation.RecordSheet;
 using SkiaSharp;
 
@@ -48,7 +49,7 @@ public class ArmourDiagramTests
                 .Returns(_ => StreamFor(TemplateSvg));
             assets.GetPipClusterAsync(Arg.Any<string>())
                 .Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
+            var control = CreateDiagram(assets);
             var window = Host(control);
 
             await control.RenderAsync(RecordSheetSamples.LightMech);
@@ -91,7 +92,7 @@ public class ArmourDiagramTests
             var pendingArtwork = new TaskCompletionSource<Stream?>(TaskCreationOptions.RunContinuationsAsynchronously);
             var artwork = Substitute.For<IRecordSheetArtworkProvider>();
             artwork.GetMechArtworkAsync("TestMech TestModel").Returns(_ => pendingArtwork.Task);
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance, artwork);
+            var control = CreateDiagram(assets, artwork);
             var window = Host(control);
             var data = RecordSheetSamples.LightMech with { FluffArtworkName = "TestMech TestModel" };
 
@@ -118,7 +119,7 @@ public class ArmourDiagramTests
                 call.Arg<string>() == "Armor_CT_52_Humanoid.svg"
                     ? Task.FromResult<Stream?>(null)
                     : Task.FromResult<Stream?>(StreamFor(ClusterSvg(call.Arg<string>()))));
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
+            var control = CreateDiagram(assets);
             var availability = new List<bool>();
             control.TemplateAvailabilityChanged += (_, isAvailable) => availability.Add(isAvailable);
             var window = Host(control);
@@ -143,7 +144,7 @@ public class ArmourDiagramTests
                 clusterAvailable
                     ? Task.FromResult<Stream?>(StreamFor(ClusterSvg(call.Arg<string>())))
                     : Task.FromResult<Stream?>(null));
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
+            var control = CreateDiagram(assets);
             var availability = new List<bool>();
             control.TemplateAvailabilityChanged += (_, isAvailable) => availability.Add(isAvailable);
             var window = Host(control);
@@ -169,7 +170,7 @@ public class ArmourDiagramTests
             assets.GetPipClusterAsync(Arg.Any<string>()).Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
             var artwork = Substitute.For<IRecordSheetArtworkProvider>();
             artwork.GetMechArtworkAsync("TestMech TestModel").Returns(_ => pendingArtwork.Task);
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance, artwork);
+            var control = CreateDiagram(assets, artwork);
             var window = Host(control);
 
             await control.RenderAsync(RecordSheetSamples.LightMech with { FluffArtworkName = "TestMech TestModel" });
@@ -200,8 +201,8 @@ public class ArmourDiagramTests
             var viewModel = new RecordSheetViewModel();
             viewModel.SelectUnit(new Mech("TestMech", "TestModel", 20,
                 [new CenterTorso("Center Torso", 10, 3, 6)]));
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(),
-                NullLogger<ArmourDiagram>.Instance, artwork) { ViewModel = viewModel };
+            var control = CreateDiagram(assets, artwork);
+            control.ViewModel = viewModel;
             var window = Host(control);
             // The render is queued at Background priority and rasterises on a pool thread; the
             // artwork lookup only starts once it has succeeded.
@@ -267,8 +268,8 @@ public class ArmourDiagramTests
             var unit = new Mech("TestMech", "TestModel", 20, [centerTorso]);
             var viewModel = new RecordSheetViewModel();
             viewModel.SelectUnit(unit);
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(),
-                NullLogger<ArmourDiagram>.Instance) { ViewModel = viewModel };
+            var control = CreateDiagram(assets);
+            control.ViewModel = viewModel;
             var window = new Window { Width = 900, Height = 1200, Content = control };
             window.Show();
             window.UpdateLayout();
@@ -321,10 +322,8 @@ public class ArmourDiagramTests
             assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(TemplateSvg));
             assets.GetPipClusterAsync(Arg.Any<string>())
                 .Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance)
-            {
-                ViewModel = viewModel
-            };
+            var control = CreateDiagram(assets);
+            control.ViewModel = viewModel;
             var window = Host(control);
             await Task.Delay(50);
             var beforeDamage = await CaptureAsync(window, control);
@@ -367,10 +366,8 @@ public class ArmourDiagramTests
             assets.GetPipClusterAsync(Arg.Any<string>())
                 .Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
             var viewModel = new RecordSheetViewModel();
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance)
-            {
-                ViewModel = viewModel
-            };
+            var control = CreateDiagram(assets);
+            control.ViewModel = viewModel;
             var window = Host(control);
 
             viewModel.SelectUnit(CreateUnit(10));
@@ -396,10 +393,8 @@ public class ArmourDiagramTests
                 .Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
             var viewModel = new RecordSheetViewModel();
             viewModel.SelectUnit(CreateUnit(10));
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance)
-            {
-                ViewModel = viewModel
-            };
+            var control = CreateDiagram(assets);
+            control.ViewModel = viewModel;
             var window = Host(control);
 
             // Wait on the condition rather than on the clock: the render is posted at Background
@@ -434,10 +429,8 @@ public class ArmourDiagramTests
                 .Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
             var viewModel = new RecordSheetViewModel();
             viewModel.SelectUnit(CreateUnit(destroyedArm));
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance)
-            {
-                ViewModel = viewModel
-            };
+            var control = CreateDiagram(assets);
+            control.ViewModel = viewModel;
             var window = Host(control);
             await Task.Delay(50);
             var destroyedRender = await CaptureAsync(window, control);
@@ -463,10 +456,8 @@ public class ArmourDiagramTests
             assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(TemplateSvg));
             assets.GetPipClusterAsync(Arg.Any<string>())
                 .Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance)
-            {
-                ViewModel = viewModel
-            };
+            var control = CreateDiagram(assets);
+            control.ViewModel = viewModel;
             var window = Host(control);
             await Task.Delay(50);
             var intactAndEmptySlots = await CaptureAsync(window, control);
@@ -500,7 +491,7 @@ public class ArmourDiagramTests
             var assets = Substitute.For<IRecordSheetTemplateProvider>();
             assets.GetTemplateAsync(Arg.Any<string>()).Returns(_ => StreamFor(TemplateSvg));
             assets.GetPipClusterAsync(Arg.Any<string>()).Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
+            var control = CreateDiagram(assets);
             var availability = new List<bool>();
             control.TemplateAvailabilityChanged += (_, available) => availability.Add(available);
             await control.RenderAsync(RecordSheetSamples.LightMech);
@@ -525,7 +516,7 @@ public class ArmourDiagramTests
             assets.GetPipClusterAsync(Arg.Any<string>()).Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
             var artwork = Substitute.For<IRecordSheetArtworkProvider>();
             artwork.GetMechArtworkAsync("Same chassis").Returns(pendingArtwork.Task);
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance, artwork);
+            var control = CreateDiagram(assets, artwork);
             await control.RenderAsync(RecordSheetSamples.LightMech with { FluffArtworkName = "Same chassis" });
             await control.RenderAsync(RecordSheetSamples.AssaultMech with { FluffArtworkName = "Same chassis" });
             assets.ClearReceivedCalls();
@@ -546,7 +537,7 @@ public class ArmourDiagramTests
             var assets = Substitute.For<IRecordSheetTemplateProvider>();
             assets.GetTemplateAsync(Arg.Any<string>()).Returns(_ => StreamFor(TemplateSvg));
             assets.GetPipClusterAsync(Arg.Any<string>()).Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
-            var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
+            var control = CreateDiagram(assets);
             var window = Host(control);
 
             await control.RenderAsync(RecordSheetSamples.LightMech);
@@ -562,6 +553,15 @@ public class ArmourDiagramTests
     /// measured and arranged never paints its image, so every capture comes back the same and any
     /// "these renders differ" assertion passes without testing anything.
     /// </summary>
+    private static ArmourDiagram CreateDiagram(
+        IRecordSheetTemplateProvider assets, IRecordSheetArtworkProvider? artwork = null)
+    {
+        var composer = new RecordSheetComposer(assets, new RecordSheetLayout(),
+            NullLogger<RecordSheetComposer>.Instance);
+        var rasterizer = new SkiaRecordSheetRasterizer(NullLogger<SkiaRecordSheetRasterizer>.Instance);
+        return new ArmourDiagram(composer, rasterizer, NullLogger<ArmourDiagram>.Instance, artwork);
+    }
+
     private static Window Host(Control control, int width = 900, int height = 1200)
     {
         var window = new Window { Width = width, Height = height, Content = control };
@@ -574,7 +574,7 @@ public class ArmourDiagramTests
     /// Pumps the dispatcher until queued renders have run. Work that lands after an await - the
     /// artwork lookup, a queued re-render - needs the loop pumped or the capture races it.
     /// </summary>
-    private static async Task SettleAsync(Window window, Func<bool>? until = null, int rounds = 40)
+    private static async Task SettleAsync(Window window, Func<bool>? until = null, int rounds = 150)
     {
         for (var round = 0; round < rounds; round++)
         {

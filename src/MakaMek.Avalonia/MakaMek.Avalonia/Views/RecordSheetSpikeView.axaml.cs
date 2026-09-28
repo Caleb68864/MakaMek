@@ -29,8 +29,8 @@ public partial class RecordSheetSpikeView : UserControl
         {
             var services = ((App)global::Avalonia.Application.Current!).ServiceProvider!;
             var diagram = new ArmourDiagram(
-                services.GetRequiredService<IRecordSheetTemplateProvider>(),
-                services.GetRequiredService<IRecordSheetLayout>(),
+                services.GetRequiredService<IRecordSheetComposer>(),
+                services.GetRequiredService<IRecordSheetRasterizer>(),
                 services.GetRequiredService<ILogger<ArmourDiagram>>());
             SheetHost.Children.Add(diagram);
             await diagram.RenderAsync(RecordSheetSamples.LightMech);
