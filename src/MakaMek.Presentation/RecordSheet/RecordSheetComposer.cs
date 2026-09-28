@@ -384,9 +384,12 @@ public sealed class RecordSheetComposer : IRecordSheetComposer
 
         foreach (var slot in slots)
         {
-            // The template presents critical slots as two vertical groups of six.
-            var column = slot.Slot / rows;
-            var row = slot.Slot % rows;
+            // The template presents critical slots as two vertical groups of six. Slot numbers are
+            // 1-based, so they are shifted before dividing: without that, slot 1 starts in the
+            // second row, the columns split one slot early, and the last slot computes column 2 and
+            // is dropped entirely.
+            var column = (slot.Slot - 1) / rows;
+            var row = (slot.Slot - 1) % rows;
             if (column > 1) continue;
 
             var cellX = x + margin + column * (cellWidth + centerGap);

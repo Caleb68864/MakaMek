@@ -183,13 +183,10 @@ public class RecordSheetComposerTests
     }
 
     [Fact]
-    public async Task ComposeAsync_DropsTheLastCriticalSlot_WhichLooksLikeAnOffByOne()
+    public async Task ComposeAsync_LaysOutAllTwelveCriticalSlots_AsTwoGroupsOfSix()
     {
-        // Pins current behaviour rather than endorsing it. Cells are placed with
-        // column = slot.Slot / rows over 1-based slot numbers, so the highest slot in a location
-        // computes column 2 and is skipped: with 12 slots, rows is 6 and 12 / 6 == 2. For 1-based
-        // numbering the maths wants (Slot - 1). Flagged for the maintainer rather than changed here,
-        // since it alters what the sheet draws.
+        // Slot numbers are 1-based. Dividing them directly put slot 1 in the second row, split the
+        // columns at 6/7 rather than 7/8, and computed column 2 for slot 12, which dropped it.
         var composer = CreateComposer(out _);
         var slots = Enumerable.Range(1, 12)
             .Select(slot => new RecordSheetCriticalSlotData(slot, $"Item{slot}", CriticalSlotState.Intact))
@@ -204,10 +201,21 @@ public class RecordSheetComposerTests
 
         var svg = await Compose(composer, data);
 
-        for (var slot = 1; slot <= 11; slot++)
+        for (var slot = 1; slot <= 12; slot++)
             svg.ShouldContain($"data-critical-slot=\"{slot}\"");
-        // The twelfth slot is currently dropped - see the comment above.
-        svg.ShouldNotContain("data-critical-slot=\"12\"");
+
+        // Slots 1 and 7 head their columns, so they share the topmost y of the table.
+        var cells = System.Xml.Linq.XDocument.Parse(svg)
+            .Descendants()
+            .Where(e => e.Attribute("data-critical-slot") is not null)
+            .ToDictionary(
+                e => int.Parse((string)e.Attribute("data-critical-slot")!),
+                e => (X: (string)e.Attribute("x")!, Y: (string)e.Attribute("y")!));
+
+        cells[1].Y.ShouldBe(cells[7].Y, "slot 1 and slot 7 are both first in their column");
+        cells[1].X.ShouldNotBe(cells[7].X, "and they are in different columns");
+        cells[6].X.ShouldBe(cells[1].X, "slot 6 closes the first column");
+        cells[12].X.ShouldBe(cells[7].X, "slot 12 closes the second");
     }
 
     [Fact]
