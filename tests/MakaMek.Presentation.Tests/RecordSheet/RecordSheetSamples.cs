@@ -1,9 +1,13 @@
 using Sanet.MakaMek.Core.Models.Units;
+using Sanet.MakaMek.Presentation.RecordSheet;
 
-namespace Sanet.MakaMek.Presentation.RecordSheet;
+namespace Sanet.MakaMek.Presentation.Tests.RecordSheet;
 
-/// <summary>Static armour values transcribed from the named MegaMek MTF examples.</summary>
-public static class RecordSheetSamples
+/// <summary>
+/// Armour values transcribed from the named MegaMek MTF examples, used as fixture data. Lives in
+/// the test projects rather than in the shipped assembly, which has no use for them.
+/// </summary>
+internal static class RecordSheetSamples
 {
     public static RecordSheetDiagramData LightMech { get; } = RecordSheetDiagramData.Create(20,
     [

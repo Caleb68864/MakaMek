@@ -295,5 +295,3 @@ skills-lock.json
 
 # Local drafts
 .scratch
-# Copied from MakaMek.Services.Avalonia.Browser during Browser static asset discovery.
-/src/MakaMek.Avalonia/MakaMek.Avalonia.Browser/wwwroot/cacheStorage.js

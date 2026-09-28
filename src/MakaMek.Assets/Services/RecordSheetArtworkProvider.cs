@@ -63,9 +63,15 @@ public sealed class RecordSheetArtworkProvider : IRecordSheetArtworkProvider
     }
 
     /// <summary>
-    /// Finds a unit's artwork, most specific first. Upstream art is filed by chassis, with variants
-    /// distinguished by an underscore - "Atlas.png", "Atlas_7A.png" - so a name like "Atlas AS7-D"
-    /// is tried verbatim, then with its separator as an underscore, then as the chassis alone.
+    /// Finds a unit's artwork, most specific first: the name verbatim, then with its separator as
+    /// an underscore, then the chassis alone.
+    ///
+    /// In practice the chassis is what resolves. Upstream files art as "Atlas.png" alongside
+    /// variants like "Atlas_7A.png" and "Atlas_7DR.png", and those suffixes are not the model
+    /// strings this project uses - there is no "Atlas_AS7-D.png" - so a variant-specific match is
+    /// a bonus rather than the expectation. Guessing a mapping between the two schemes was
+    /// deliberately avoided: showing another variant's illustration would be worse than showing
+    /// the chassis.
     /// </summary>
     private static string? FindArtwork(IReadOnlyList<string> ids, string mechName)
     {
