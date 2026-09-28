@@ -69,6 +69,7 @@ public partial class UnitRecordSheet : UserControl
     private RecordSheetViewModel? _localDiagramViewModel;
     private RecordSheetViewModel? _observedDiagramViewModel;
     private ArmourDiagram? _armourDiagram;
+    private bool _isObserving = true;
 
     public Unit? Unit
     {
@@ -201,11 +202,32 @@ public partial class UnitRecordSheet : UserControl
                 _observedDiagramViewModel.PropertyChanged -= OnDiagramViewModelPropertyChanged;
 
             _observedDiagramViewModel = DiagramViewModel;
-            if (_observedDiagramViewModel is not null)
+            if (_observedDiagramViewModel is not null && _isObserving)
                 _observedDiagramViewModel.PropertyChanged += OnDiagramViewModelPropertyChanged;
         }
 
         UpdateRecordSheetDiagram();
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        if (_isObserving || _observedDiagramViewModel is null) return;
+        _observedDiagramViewModel.PropertyChanged += OnDiagramViewModelPropertyChanged;
+        _isObserving = true;
+        UpdateRecordSheetDiagram();
+    }
+
+    /// <summary>
+    /// The diagram view model belongs to the battle map and outlives this view, so staying
+    /// subscribed would keep the sheet and its rendered bitmap alive after the view is gone.
+    /// </summary>
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        if (_observedDiagramViewModel is not null)
+            _observedDiagramViewModel.PropertyChanged -= OnDiagramViewModelPropertyChanged;
+        _isObserving = false;
+        base.OnDetachedFromVisualTree(e);
     }
 
     private void OnDiagramViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)

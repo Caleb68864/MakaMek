@@ -21,7 +21,7 @@ namespace MakaMek.Avalonia.Tests.Controls;
 public class ArmourDiagramTests
 {
     private static readonly HeadlessUnitTestSession Session =
-        HeadlessUnitTestSession.StartNew(typeof(SkiaHeadlessTestSetup));
+        HeadlessUnitTestSession.StartNew(typeof(HeadlessTestSetup));
 
     /// <summary>
     /// Runs async work on the headless dispatcher. HeadlessUnitTestSession has no Func&lt;Task&gt;
@@ -47,8 +47,7 @@ public class ArmourDiagramTests
             assets.GetPipClusterAsync(Arg.Any<string>())
                 .Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
             var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
-            control.Measure(new Size(900, 1200));
-            control.Arrange(new Rect(0, 0, 900, 1200));
+            var window = Host(control);
 
             await control.RenderAsync(RecordSheetSamples.LightMech);
             var scrollViewer = (ScrollViewer)control.Content!;
@@ -60,9 +59,9 @@ public class ArmourDiagramTests
             control.Measure(new Size(700, 1200));
             control.Arrange(new Rect(0, 0, 700, 1200));
             image.Width.ShouldBe(676);
-            var lightPng = control.RenderToPngBytes(900, 1200);
+            var lightPng = CapturePng(window, control);
             await control.RenderAsync(RecordSheetSamples.AssaultMech);
-            var assaultPng = control.RenderToPngBytes(900, 1200);
+            var assaultPng = CapturePng(window, control);
 
             using var bitmap = SKBitmap.Decode(lightPng);
             bitmap.ShouldNotBeNull();
@@ -85,18 +84,22 @@ public class ArmourDiagramTests
             var assets = Substitute.For<IRecordSheetTemplateProvider>();
             assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(TemplateSvg));
             assets.GetPipClusterAsync(Arg.Any<string>()).Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
+            // The artwork is gated so the baseline is captured before it can arrive; left ungated it
+            // can land during the first capture and both renders come back identical.
+            var pendingArtwork = new TaskCompletionSource<Stream?>(TaskCreationOptions.RunContinuationsAsynchronously);
             var artwork = Substitute.For<IRecordSheetArtworkProvider>();
-            artwork.GetMechArtworkAsync("TestMech TestModel").Returns(_ => Task.FromResult<Stream?>(PngFor(SKColors.Red)));
+            artwork.GetMechArtworkAsync("TestMech TestModel").Returns(_ => pendingArtwork.Task);
             var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance, artwork);
-            control.Measure(new Size(900, 1200));
-            control.Arrange(new Rect(0, 0, 900, 1200));
+            var window = Host(control);
             var data = RecordSheetSamples.LightMech with { FluffArtworkName = "TestMech TestModel" };
 
             await control.RenderAsync(data);
-            var baseline = control.RenderToPngBytes(900, 1200);
-            await Task.Delay(100);
+            var baseline = CapturePng(window, control);
 
-            var withArtwork = control.RenderToPngBytes(900, 1200);
+            pendingArtwork.SetResult(PngFor(SKColors.Red));
+            await SettleAsync(window);
+
+            var withArtwork = CapturePng(window, control);
             withArtwork.SequenceEqual(baseline).ShouldBeFalse();
             await artwork.Received(1).GetMechArtworkAsync("TestMech TestModel");
         });
@@ -116,8 +119,7 @@ public class ArmourDiagramTests
             var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
             var availability = new List<bool>();
             control.TemplateAvailabilityChanged += (_, isAvailable) => availability.Add(isAvailable);
-            control.Measure(new Size(900, 1200));
-            control.Arrange(new Rect(0, 0, 900, 1200));
+            var window = Host(control);
 
             await control.RenderAsync(RecordSheetDiagramData.Create(20,
                 [new KeyValuePair<ArmourRegion, int>(new(PartLocation.CenterTorso, ArmourFace.Front), 52)]));
@@ -142,8 +144,7 @@ public class ArmourDiagramTests
             var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
             var availability = new List<bool>();
             control.TemplateAvailabilityChanged += (_, isAvailable) => availability.Add(isAvailable);
-            control.Measure(new Size(900, 1200));
-            control.Arrange(new Rect(0, 0, 900, 1200));
+            var window = Host(control);
 
             var data = RecordSheetDiagramData.Create(20,
                 [new KeyValuePair<ArmourRegion, int>(new(PartLocation.CenterTorso, ArmourFace.Front), 10)]);
@@ -167,18 +168,17 @@ public class ArmourDiagramTests
             var artwork = Substitute.For<IRecordSheetArtworkProvider>();
             artwork.GetMechArtworkAsync("TestMech TestModel").Returns(_ => pendingArtwork.Task);
             var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance, artwork);
-            control.Measure(new Size(900, 1200));
-            control.Arrange(new Rect(0, 0, 900, 1200));
+            var window = Host(control);
 
             await control.RenderAsync(RecordSheetSamples.LightMech with { FluffArtworkName = "TestMech TestModel" });
-            var baseline = control.RenderToPngBytes(900, 1200);
+            var baseline = CapturePng(window, control);
             using (var bitmap = SKBitmap.Decode(baseline))
                 bitmap!.Pixels.Count(pixel => pixel != SKColors.White).ShouldBeGreaterThan(100);
 
             pendingArtwork.SetException(new IOException("artwork source unavailable"));
             await Task.Delay(50);
 
-            control.RenderToPngBytes(900, 1200).SequenceEqual(baseline).ShouldBeTrue();
+            CapturePng(window, control).SequenceEqual(baseline).ShouldBeTrue();
             await artwork.Received(1).GetMechArtworkAsync("TestMech TestModel");
         });
     }
@@ -200,16 +200,21 @@ public class ArmourDiagramTests
                 [new CenterTorso("Center Torso", 10, 3, 6)]));
             var control = new ArmourDiagram(assets, new RecordSheetLayout(),
                 NullLogger<ArmourDiagram>.Instance, artwork) { ViewModel = viewModel };
-            control.Measure(new Size(900, 1200));
-            control.Arrange(new Rect(0, 0, 900, 1200));
+            var window = Host(control);
+            // The view model render is queued at Background priority, so it has to be pumped
+            // before the lookup it starts can have happened.
+            await SettleAsync(window);
 
-            _ = artwork.Received(1).GetMechArtworkAsync("TestMech TestModel");
+            await artwork.Received(1).GetMechArtworkAsync("TestMech TestModel");
+
             viewModel.SelectUnit(null);
+            await SettleAsync(window);
             var image = (Image)((Border)((ScrollViewer)control.Content!).Content!).Child!;
             image.Source.ShouldBeNull();
 
+            // The artwork lands after the unit was cleared, and must not bring the old sheet back.
             pendingArtwork.SetResult(PngFor(SKColors.Red));
-            await Task.Delay(50);
+            await SettleAsync(window);
 
             image.Source.ShouldBeNull();
         });
@@ -291,23 +296,22 @@ public class ArmourDiagramTests
             {
                 ViewModel = viewModel
             };
-            control.Measure(new Size(900, 1200));
-            control.Arrange(new Rect(0, 0, 900, 1200));
+            var window = Host(control);
             await Task.Delay(50);
-            var beforeDamage = control.RenderToPngBytes(900, 1200);
+            var beforeDamage = CapturePng(window, control);
 
             centerTorso.ApplyDamage(4, HitDirection.Front);
             viewModel.Refresh();
             await Task.Delay(50);
 
-            var afterDamage = control.RenderToPngBytes(900, 1200);
+            var afterDamage = CapturePng(window, control);
             afterDamage.SequenceEqual(beforeDamage).ShouldBeFalse();
             viewModel.Unit.ShouldBeSameAs(unit);
             viewModel.DiagramData!.Armour[new(PartLocation.CenterTorso, ArmourFace.Front)].ShouldBe(6);
 
             viewModel.AddRecentDamage([PartLocation.CenterTorso]);
             await Task.Delay(50);
-            var recentDamage = control.RenderToPngBytes(900, 1200);
+            var recentDamage = CapturePng(window, control);
             recentDamage.SequenceEqual(afterDamage).ShouldBeFalse();
             using (var highlightedBitmap = SKBitmap.Decode(recentDamage))
                 highlightedBitmap!.Pixels.Count(pixel => pixel.Red > 120 && pixel.Red > pixel.Green)
@@ -315,7 +319,7 @@ public class ArmourDiagramTests
 
             viewModel.ClearRecentDamage();
             await Task.Delay(50);
-            control.RenderToPngBytes(900, 1200).SequenceEqual(afterDamage).ShouldBeTrue();
+            CapturePng(window, control).SequenceEqual(afterDamage).ShouldBeTrue();
         });
     }
 
@@ -338,8 +342,7 @@ public class ArmourDiagramTests
             {
                 ViewModel = viewModel
             };
-            control.Measure(new Size(900, 1200));
-            control.Arrange(new Rect(0, 0, 900, 1200));
+            var window = Host(control);
 
             viewModel.SelectUnit(CreateUnit(10));
             Volatile.Read(ref templateCalls).ShouldBe(0);
@@ -368,18 +371,17 @@ public class ArmourDiagramTests
             {
                 ViewModel = viewModel
             };
-            control.Measure(new Size(900, 1200));
-            control.Arrange(new Rect(0, 0, 900, 1200));
+            var window = Host(control);
 
             await Task.Delay(20);
             Volatile.Read(ref templateCalls).ShouldBe(1);
             viewModel.SelectUnit(CreateUnit(47));
             await Task.Delay(50);
-            var latestRender = control.RenderToPngBytes(900, 1200);
+            var latestRender = CapturePng(window, control);
             firstTemplate.SetResult(StreamFor(TemplateSvg));
             await Task.Delay(50);
 
-            control.RenderToPngBytes(900, 1200).SequenceEqual(latestRender).ShouldBeTrue();
+            CapturePng(window, control).SequenceEqual(latestRender).ShouldBeTrue();
             viewModel.DiagramData!.Tonnage.ShouldBe(100);
         });
     }
@@ -403,15 +405,14 @@ public class ArmourDiagramTests
             {
                 ViewModel = viewModel
             };
-            control.Measure(new Size(900, 1200));
-            control.Arrange(new Rect(0, 0, 900, 1200));
+            var window = Host(control);
             await Task.Delay(50);
-            var destroyedRender = control.RenderToPngBytes(900, 1200);
+            var destroyedRender = CapturePng(window, control);
 
             viewModel.SelectUnit(CreateUnit(blownOffArm));
             await Task.Delay(50);
 
-            control.RenderToPngBytes(900, 1200).SequenceEqual(destroyedRender).ShouldBeFalse();
+            CapturePng(window, control).SequenceEqual(destroyedRender).ShouldBeFalse();
         });
     }
 
@@ -433,28 +434,27 @@ public class ArmourDiagramTests
             {
                 ViewModel = viewModel
             };
-            control.Measure(new Size(900, 1200));
-            control.Arrange(new Rect(0, 0, 900, 1200));
+            var window = Host(control);
             await Task.Delay(50);
-            var intactAndEmptySlots = control.RenderToPngBytes(900, 1200);
+            var intactAndEmptySlots = CapturePng(window, control);
 
             centerTorso.CriticalHit(3);
             viewModel.Refresh();
             await Task.Delay(50);
-            var hitSlot = control.RenderToPngBytes(900, 1200);
+            var hitSlot = CapturePng(window, control);
             hitSlot.SequenceEqual(intactAndEmptySlots).ShouldBeFalse();
 
             centerTorso.CriticalHit(4);
             viewModel.Refresh();
             await Task.Delay(50);
-            var destroyedComponent = control.RenderToPngBytes(900, 1200);
+            var destroyedComponent = CapturePng(window, control);
             destroyedComponent.SequenceEqual(hitSlot).ShouldBeFalse();
 
             var partialMech = new Mech("Test", "Partial", 20,
                 [new CenterTorso("Center Torso", 10, 3, 6)]);
             viewModel.SelectUnit(partialMech);
             await Task.Delay(50);
-            var missingHead = control.RenderToPngBytes(900, 1200);
+            var missingHead = CapturePng(window, control);
             missingHead.SequenceEqual(intactAndEmptySlots).ShouldBeFalse();
         });
     }
@@ -514,13 +514,51 @@ public class ArmourDiagramTests
             assets.GetTemplateAsync(Arg.Any<string>()).Returns(_ => StreamFor(TemplateSvg));
             assets.GetPipClusterAsync(Arg.Any<string>()).Returns(call => StreamFor(ClusterSvg(call.Arg<string>())));
             var control = new ArmourDiagram(assets, new RecordSheetLayout(), NullLogger<ArmourDiagram>.Instance);
+            var window = Host(control);
 
             await control.RenderAsync(RecordSheetSamples.LightMech);
-            var png = control.RenderToPngBytes(900, 1200);
+            var png = CapturePng(window, control);
             using var bitmap = SKBitmap.Decode(png);
             bitmap!.Pixels.Count(pixel => pixel.Red > 120 && pixel.Red > pixel.Green * 1.5)
                 .ShouldBe(0);
         });
+    }
+
+    /// <summary>
+    /// Hosts a diagram in a window and captures what is actually on screen. A control that is only
+    /// measured and arranged never paints its image, so every capture comes back the same and any
+    /// "these renders differ" assertion passes without testing anything.
+    /// </summary>
+    private static Window Host(Control control, int width = 900, int height = 1200)
+    {
+        var window = new Window { Width = width, Height = height, Content = control };
+        window.Show();
+        window.UpdateLayout();
+        return window;
+    }
+
+    /// <summary>
+    /// Pumps the dispatcher until queued renders have run. Work that lands after an await - the
+    /// artwork lookup, a queued re-render - needs the loop pumped or the capture races it.
+    /// </summary>
+    private static async Task SettleAsync(Window window, int rounds = 10)
+    {
+        for (var round = 0; round < rounds; round++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(10);
+            Dispatcher.UIThread.RunJobs();
+            window.UpdateLayout();
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        }
+    }
+
+    private static byte[] CapturePng(Window window, Control control, int width = 900, int height = 1200)
+    {
+        Dispatcher.UIThread.RunJobs();
+        window.UpdateLayout();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        return control.RenderToPngBytes(width, height);
     }
 
     private static Stream StreamFor(string value) => new MemoryStream(Encoding.UTF8.GetBytes(value));

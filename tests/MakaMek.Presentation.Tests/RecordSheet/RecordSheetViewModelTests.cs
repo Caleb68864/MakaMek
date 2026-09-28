@@ -113,6 +113,49 @@ public class RecordSheetViewModelTests
     }
 
     [Fact]
+    public void DiagramData_Equality_HandlesNullSelfAndMismatchedCollections()
+    {
+        var unit = CreateMech(20, 10);
+        var first = RecordSheetDiagramData.FromUnit(unit);
+
+        first.Equals(null).ShouldBeFalse();
+        first.Equals(first).ShouldBeTrue("the same instance short-circuits");
+
+        // A shorter armour dictionary and one of equal length with a different key both differ.
+        var fewerRegions = RecordSheetDiagramData.Create(20,
+            [new(new ArmourRegion(PartLocation.Head, ArmourFace.Front), 8)]);
+        fewerRegions.ShouldNotBe(first);
+        first.ShouldNotBe(fewerRegions);
+
+        var sameCountDifferentKey = RecordSheetDiagramData.Create(20,
+            [new(new ArmourRegion(PartLocation.LeftLeg, ArmourFace.Rear), 8)]);
+        sameCountDifferentKey.ShouldNotBe(fewerRegions);
+
+        // Critical slots: same instance, a different count, and the same count with different slots.
+        var slots = new Dictionary<PartLocation, IReadOnlyList<RecordSheetCriticalSlotData>>
+        {
+            [PartLocation.Head] = [new RecordSheetCriticalSlotData(1, "Sensors", CriticalSlotState.Intact)]
+        };
+        var withSlots = fewerRegions with { CriticalSlotsByLocation = slots };
+        (fewerRegions with { CriticalSlotsByLocation = slots }).ShouldBe(withSlots);
+        withSlots.ShouldNotBe(fewerRegions);
+        (withSlots with
+        {
+            CriticalSlotsByLocation = new Dictionary<PartLocation, IReadOnlyList<RecordSheetCriticalSlotData>>
+            {
+                [PartLocation.Head] = [new RecordSheetCriticalSlotData(1, "Sensors", CriticalSlotState.Hit)]
+            }
+        }).ShouldNotBe(withSlots);
+        (withSlots with
+        {
+            CriticalSlotsByLocation = new Dictionary<PartLocation, IReadOnlyList<RecordSheetCriticalSlotData>>
+            {
+                [PartLocation.CenterTorso] = [new RecordSheetCriticalSlotData(1, "Sensors", CriticalSlotState.Intact)]
+            }
+        }).ShouldNotBe(withSlots, "same count, different location");
+    }
+
+    [Fact]
     public void SelectUnit_ReportsDestroyedAndBlownOffAsDistinctStates()
     {
         var unit = CreateMech(20, 10);

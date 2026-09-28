@@ -3,11 +3,13 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Sanet.MakaMek.Avalonia.Controls;
 using Sanet.MakaMek.Assets.Services;
+using Sanet.MakaMek.Core.Data.Game;
 using Sanet.MakaMek.Core.Models.Units;
 using Sanet.MakaMek.Core.Models.Units.Mechs;
 using Sanet.MakaMek.Presentation.RecordSheet;
@@ -18,7 +20,7 @@ namespace MakaMek.Avalonia.Tests.Controls;
 public class UnitRecordSheetTests
 {
     private static readonly HeadlessUnitTestSession Session =
-        HeadlessUnitTestSession.StartNew(typeof(SkiaHeadlessTestSetup));
+        HeadlessUnitTestSession.StartNew(typeof(HeadlessTestSetup));
 
     /// <summary>
     /// Runs async work on the headless dispatcher. HeadlessUnitTestSession has no Func&lt;Task&gt;
@@ -41,8 +43,7 @@ public class UnitRecordSheetTests
             var assets = CreateAssets(templateAvailable: true);
             var control = CreateControl(assets);
             control.Unit = CreateMech();
-            control.Measure(new Size(400, 800));
-            control.Arrange(new Rect(0, 0, 400, 800));
+            var window = Host(control, 400, 800);
 
             await WaitForAsync(() => control.FindControl<TabItem>("RecordSheetTab")!.IsVisible);
 
@@ -58,9 +59,9 @@ public class UnitRecordSheetTests
         {
             var assets = CreateAssets(templateAvailable: true);
             var control = CreateControl(assets);
-            control.Unit = Substitute.For<Unit>("Test", "Vehicle", 50, Array.Empty<UnitPart>());
-            control.Measure(new Size(400, 800));
-            control.Arrange(new Rect(0, 0, 400, 800));
+            // Castle does not apply optional-parameter defaults, so every constructor argument is passed.
+            control.Unit = Substitute.For<Unit>("Test", "Vehicle", 50, Array.Empty<UnitPart>(), null, null);
+            var window = Host(control, 400, 800);
             await Task.Delay(50);
 
             control.FindControl<TabItem>("RecordSheetTab")!.IsVisible.ShouldBeFalse();
@@ -79,8 +80,7 @@ public class UnitRecordSheetTests
             var assets = CreateAssets(templateAvailable: false);
             var control = CreateControl(assets);
             control.Unit = CreateMech();
-            control.Measure(new Size(400, 800));
-            control.Arrange(new Rect(0, 0, 400, 800));
+            var window = Host(control, 400, 800);
             await Task.Delay(50);
 
             control.FindControl<TabItem>("RecordSheetTab")!.IsVisible.ShouldBeFalse();
@@ -98,22 +98,25 @@ public class UnitRecordSheetTests
         {
             var control = CreateControl(CreateAssets(templateAvailable: true));
             control.Unit = CreateMech();
-            control.Measure(new Size(320, 640));
-            control.Arrange(new Rect(0, 0, 320, 640));
+            var window = Host(control, 320, 640);
             var recordSheetTab = control.FindControl<TabItem>("RecordSheetTab")!;
 
             await WaitForAsync(() => recordSheetTab.IsVisible);
             control.FindControl<TabControl>("RecordSheetTabs")!.SelectedItem = recordSheetTab;
-            control.Measure(new Size(320, 640));
-            control.Arrange(new Rect(0, 0, 320, 640));
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
 
             var diagram = control.GetVisualDescendants().OfType<ArmourDiagram>().Single();
             var scrollViewer = (ScrollViewer)diagram.Content!;
             var frame = (Border)scrollViewer.Content!;
             var image = (Image)frame.Child!;
+            // Assert the relationship rather than pixel constants: hosted in a real window the tab
+            // chrome takes some of the 320, and the point is that the sheet fits what is left.
             scrollViewer.HorizontalScrollBarVisibility.ShouldBe(ScrollBarVisibility.Disabled);
-            diagram.Bounds.Width.ShouldBe(320);
-            image.Width.ShouldBe(296);
+            diagram.Bounds.Width.ShouldBeGreaterThan(0);
+            diagram.Bounds.Width.ShouldBeLessThanOrEqualTo(320);
+            image.Width.ShouldBe(diagram.Bounds.Width - 24, "the sheet is inset by the 12px margin on each side");
+            image.Width.ShouldBeLessThan(diagram.Bounds.Width);
         });
     }
 
@@ -176,7 +179,10 @@ public class UnitRecordSheetTests
             await WaitForAsync(() => tab.IsVisible);
             tabs.SelectedItem.ShouldBeSameAs(tab);
 
+            // The template stops being available. A refresh only re-renders when the projection
+            // actually changed, so the unit takes damage to drive one.
             assets.GetTemplateAsync(Arg.Any<string>()).Returns(Task.FromResult<Stream?>(null));
+            unit.Parts[PartLocation.CenterTorso].ApplyDamage(3, HitDirection.Front);
             snapshot.Refresh();
             await WaitForAsync(() => !tab.IsVisible);
             tabs.SelectedIndex.ShouldBe(0);
@@ -220,9 +226,25 @@ public class UnitRecordSheetTests
     private static async Task WaitForAsync(Func<bool> condition)
     {
         for (var attempt = 0; attempt < 100 && !condition(); attempt++)
+        {
+            Dispatcher.UIThread.RunJobs();
             await Task.Delay(20);
+            Dispatcher.UIThread.RunJobs();
+        }
 
         condition().ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Hosts the control in a window. Descendants only exist once the control is in a visual tree,
+    /// so a control that is merely measured and arranged has none to find.
+    /// </summary>
+    private static Window Host(Control control, int width, int height)
+    {
+        var window = new Window { Width = width, Height = height, Content = control };
+        window.Show();
+        window.UpdateLayout();
+        return window;
     }
 
     private static Stream StreamFor(string value) => new MemoryStream(Encoding.UTF8.GetBytes(value));
