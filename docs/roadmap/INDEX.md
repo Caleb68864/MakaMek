@@ -49,3 +49,4 @@ goes in each, which one will look wrong to a reviewer and what its description h
 | Document | Summary |
 |----------|---------|
 | [2026-09-28-record-sheet-paper-doll.md](2026-09-28-record-sheet-paper-doll.md) | Landing the record-sheet paper doll: twelve PRs, dependency order, the two oversized layers, and the five traps that cost time the first time round |
+| [2026-09-28-ui-overhaul-remainder.md](2026-09-28-ui-overhaul-remainder.md) | Layers 5, 7 and 8 of epic #1515: which source branches are cumulative and must be re-cut, where the layer 8 views already exist, and what order to send them in |
