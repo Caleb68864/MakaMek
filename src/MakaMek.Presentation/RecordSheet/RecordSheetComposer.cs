@@ -309,11 +309,18 @@ public sealed class RecordSheetComposer : IRecordSheetComposer
         try
         {
             // Assets are fetched from a third-party repository, so parsing is treated as untrusted
-            // input: DTD processing stays off, which is the default and is what blocks entity
-            // expansion attacks, and a document that will not parse becomes "no sheet" rather than
-            // an exception thrown through the render.
+            // input. Real pip clusters are Illustrator exports carrying a public DTD, some of which
+            // define entities their own markup then uses, so the internal subset has to be read -
+            // but XmlResolver stays null so nothing external is ever fetched, and entity expansion
+            // is capped. A document that will not parse becomes "no sheet" rather than an exception
+            // thrown out through the render.
             using var reader = XmlReader.Create(new MemoryStream(bytes, writable: false),
-                new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null });
+                new XmlReaderSettings
+                {
+                    DtdProcessing = DtdProcessing.Parse,
+                    XmlResolver = null,
+                    MaxCharactersFromEntities = 1_000_000
+                });
             var document = XDocument.Load(reader);
             _documentCache[key] = document;
             return document;

@@ -284,20 +284,20 @@ public class RecordSheetComposerTests
     }
 
     [Fact]
-    public async Task ComposeAsync_RejectsATemplateThatDeclaresADtd()
+    public async Task ComposeAsync_NeverResolvesAnExternalEntity()
     {
-        // Assets come from a third-party repository over the network. A document declaring an
-        // external entity must not be parsed, and must degrade to "no sheet" rather than throwing
-        // through the render or reading the referenced file.
+        // Assets come from a third-party repository over the network. Real pip clusters carry a
+        // public DTD, so declaring one is not itself refused - but an external entity must never be
+        // fetched, and its target must never reach the composed output.
         var secret = Path.Combine(Path.GetTempPath(), $"makamek-xxe-{Guid.NewGuid():N}.txt");
         await File.WriteAllTextAsync(secret, "TOP-SECRET");
         try
         {
-            var hostile = $"""
-                <?xml version="1.0"?>
-                <!DOCTYPE svg [<!ENTITY leak SYSTEM "file://{secret}">]>
-                <svg xmlns="http://www.w3.org/2000/svg"><text>&leak;</text></svg>
-                """;
+            // Built from the real fixture so composition would otherwise succeed: if the entity
+            // were ever resolved, the file's contents would reach the composed sheet.
+            var hostile = TemplateSvg
+                .Replace("<svg ", $"<!DOCTYPE svg [<!ENTITY leak SYSTEM \"file://{secret}\">]>\n<svg ")
+                .Replace("</svg>", "<text id=\"leaked\">&leak;</text></svg>");
             var assets = Substitute.For<IRecordSheetTemplateProvider>();
             assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(hostile));
             assets.GetPipClusterAsync(Arg.Any<string>())
@@ -307,12 +307,40 @@ public class RecordSheetComposerTests
 
             var svg = await composer.ComposeAsync(RecordSheetSamples.LightMech);
 
-            svg.ShouldBeNull("a template declaring a DTD is refused");
+            // Either the document is refused outright or the entity is dropped; what must never
+            // happen is the file's contents appearing in the sheet.
+            if (svg is not null)
+                Encoding.UTF8.GetString(svg).ShouldNotContain("TOP-SECRET");
         }
         finally
         {
             File.Delete(secret);
         }
+    }
+
+    [Fact]
+    public async Task ComposeAsync_AcceptsClustersWithAPublicDtdAndInternalEntities()
+    {
+        // The real pip clusters are Illustrator exports: a public DTD plus an internal subset whose
+        // entities their own markup then references. Refusing those broke the feature outright.
+        var cluster = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" [
+                <!ENTITY ns_ai "http://ns.adobe.com/AdobeIllustrator/10.0/">
+            ]>
+            <svg xmlns="http://www.w3.org/2000/svg" xmlns:i="&ns_ai;">
+              <switch><g><path d="M20 80h40v40h-40z"/></g></switch>
+            </svg>
+            """;
+        var assets = Substitute.For<IRecordSheetTemplateProvider>();
+        assets.GetTemplateAsync("mek_biped_default.svg").Returns(_ => StreamFor(TemplateSvg));
+        assets.GetPipClusterAsync(Arg.Any<string>()).Returns(_ => StreamFor(cluster));
+        var composer = new RecordSheetComposer(assets, new RecordSheetLayout(),
+            NullLogger<RecordSheetComposer>.Instance);
+
+        var svg = await composer.ComposeAsync(RecordSheetSamples.LightMech);
+
+        svg.ShouldNotBeNull("a public DTD with a used internal subset is how the real assets ship");
     }
 
     [Fact]
