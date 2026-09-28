@@ -28,6 +28,18 @@ Assembly/root namespaces are prefixed `Sanet.` (e.g. `MakaMek.Core` → `Sanet.M
 
 Tests use **xUnit** + **Shouldly** (assertions) + **NSubstitute** (mocking). UI (Avalonia) is intentionally excluded from coverage; presentation logic lives in `MakaMek.Presentation` (ViewModels/UiStates) specifically so it *can* be unit-tested without the UI. Prefer adding logic there over the Avalonia layer.
 
+### Writing code that reports clean coverage
+
+Two different reports land on every PR and they measure different things. **Cocodif** (the per-module sticky comment) counts *changed lines* that were executed. **Codecov** additionally counts *partial branches*, so a line that runs but only ever takes one side of a condition lowers its patch percentage and earns an `:x:`. Write for both:
+
+- **Cover changed lines from the owning module's own test project.** Coverage is collected per module with `/p:Include=[Sanet.MakaMek.<Module>]*`, so a `MakaMek.Presentation` line is only covered by `MakaMek.Presentation.Tests`. Exercising it from `MakaMek.Avalonia.Tests` does not count. A PR touching several modules must satisfy each module's report separately.
+- **Do not add unreachable defensive guards.** A `?? fallback`, `x == null` check, or `is not null` test that no caller can reach is a branch that can never be covered. If a private helper's only caller has already established a value, pass it in as a parameter rather than re-checking it.
+- **Assert single-expression bool properties on both sides.** View-binding flags such as `IsSomethingVisible => CurrentState is SomeState && Something != null` are not read by anything else until the `.axaml` layer exists, so without a test they are reported uncovered, and with only one assertion they are reported partial.
+- **Read `field ??=` cached members twice.** Lazily created commands need a second read for the cached side of the null-coalescing assignment, e.g. `sut.ZoomInCommand.ShouldBeSameAs(sut.ZoomInCommand)`.
+- **Cover the null-object paths that are real.** `Game` is null before a game is attached, and `PhaseStepState?.ActivePlayer` is null between turns; both are reachable and need their own assertions.
+- **Exercise filters rather than assuming them.** A `Where`/`Any` predicate needs at least one item on each side — a shutdown or wrecked unit alongside a healthy one, an unselected weapon alongside a selected one.
+- **Check before pushing** with `skills/coverage-check`, which runs the same coverlet command and Cocodif report CI uses.
+
 ## Versioning (required for PRs)
 
 `Directory.Build.props` holds a single `<VersionPrefix>` for all packages. **Every PR that modifies files under `src/` must bump this version** — `pr-version-check.yml` fails the PR if the version is not greater than `main`. Bump it as part of your change.
