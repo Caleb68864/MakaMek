@@ -26,6 +26,7 @@ claims it for a stub `TestApp`, and only one headless platform may exist per ass
 | 2026-09-29 | *(negative result, recorded deliberately)* can the harness catch a broken binding path? | n/a | **No, and it does not need to.** Typing `TurnNotificationsTypo` into `BattleMapView.axaml` fails the **build**: this project sets `AvaloniaUseCompiledBindingsByDefault` and the view declares `x:DataType`, so a bad path is a compile error, not a silent runtime failure | The compiler catches it first |
 | 2026-09-29 | bundled units load with no network, via `LocalFolderResourceStreamProvider` over the repo's `data/` folder | nothing covered this; the app's configured source is remote | 199 `.mmux` units load in-process, so a harness game needs no network | n/a |
 | 2026-09-29 | **the harness's own async helper** | the test was green | **The helper was vacuous.** An impossible assertion inside `Run(Func<Task>)` passed. Fixed by wrapping the body to return a value, which forces the `Func<Task<T>>` overload. Mutation now fails as it should | No. Only a mutation check found it |
+| 2026-09-29 | **initiative winner banner, PR #1534, in a real two bot game** | 14 unit tests green after the ordering fix; the maintainer still saw no banner | **Second defect, and the one he reported.** The winner is never announced at all. `BattleMapViewModel` subscribes with `Game.Commands.ObserveOn(_dispatcherService.Scheduler)`, so `ProcessCommand` runs after the command arrives. The server's auto roll publishes the whole initiative burst synchronously, so by the time the deferred `DiceRolledCommand` handler runs, `TurnPhase` is already `Movement` and the `when TurnPhase == Initiative` guard is false | **No.** He found the symptom by playing; the cause was only visible with a real game running |
 ## Rules for entries
 
 - Record what the **existing** tests said first. The argument for this project is the gap between
@@ -51,6 +52,18 @@ the body returns a value.
 Earlier vault guidance said the API "has no `Func<Task>` overload". That is the wrong diagnosis: the
 overload resolution is the problem, and the cure is returning a value. Any new async headless test
 must be mutation-checked once before it is trusted.
+
+## Why the unit tests could not have found that
+
+The view model tests call `game.HandleCommand(...)` synchronously and read `Game.TurnPhase` on the
+next line, so the guard always holds. The scheduler hop exists only once `BattleMapViewModel` is
+subscribed the way the application subscribes it. **Any `when` clause that reads live game state
+inside a command handler has this hazard**, because the handler is deferred and the state is not.
+That is a class of defect, not a one off, and it is reachable only by running the assembled app.
+
+The test lives on a combined branch rather than here: this project is cut from `main`, and
+`TurnNotificationKind.Initiative` only exists on the feature branch. That is the intended shape.
+The harness is infrastructure to be merged into a feature branch when verifying that feature.
 
 ## What this harness is *not* for
 
