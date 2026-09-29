@@ -14,13 +14,19 @@ namespace MakaMek.Avalonia.AppTests;
 /// That failure is silent: a view model with no commands looks exactly like a game that published
 /// none.
 ///
-/// The scheduler here is a real <see cref="EventLoopScheduler"/>, so delivery stays genuinely
-/// deferred. That matters: the defect this harness found was caused by deferred delivery, and an
-/// immediate scheduler would have hidden it.
+/// The scheduler is built from the dispatcher's own synchronization context, captured when this is
+/// constructed - which must therefore happen inside a dispatch. That keeps two properties the tests
+/// depend on: delivery is genuinely deferred, which matters because deferred delivery is what caused
+/// the defect this harness found and an immediate scheduler would hide it; and it still runs on the
+/// UI thread, so a view model bound to a real view can raise collection changes without tripping
+/// Avalonia's thread affinity checks.
 /// </summary>
 internal sealed class TestDispatcherService : IDispatcherService, IDisposable
 {
-    private readonly EventLoopScheduler _scheduler = new();
+    private readonly SynchronizationContextScheduler _scheduler =
+        new(SynchronizationContext.Current
+            ?? throw new InvalidOperationException(
+                "Construct TestDispatcherService inside a dispatch: it captures the dispatcher's context."));
 
     public IScheduler Scheduler => _scheduler;
 
@@ -42,5 +48,5 @@ internal sealed class TestDispatcherService : IDispatcherService, IDisposable
         else Dispatcher.UIThread.InvokeAsync(callback);
     }
 
-    public void Dispose() => _scheduler.Dispose();
+    public void Dispose() { }
 }

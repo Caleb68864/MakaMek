@@ -78,9 +78,13 @@ through a scheduler bound to a dispatcher that no longer exists, and `ObserveOn`
 Proved with a probe: scheduling a trivial action on that scheduler and pumping never ran it.
 
 Fix: build view models with `ActivatorUtilities.CreateInstance<BattleMapViewModel>(services,
-dispatcher)` passing a `TestDispatcherService` whose scheduler is a per instance
-`EventLoopScheduler`. Delivery stays genuinely deferred, which matters, because deferred delivery is
-what caused the defect this harness found. An immediate scheduler would have hidden it.
+dispatcher)` passing a `TestDispatcherService` whose scheduler is built from the dispatcher's own
+synchronization context, captured per instance inside the dispatch. Two properties matter and both
+are load bearing. Delivery stays genuinely **deferred**, because deferred delivery is what caused the
+defect this harness found and an immediate scheduler would hide it. And it still runs on the **UI
+thread**, so a view model bound to a real view can raise collection changes without tripping
+Avalonia's thread affinity checks. An `EventLoopScheduler` gives the first property and loses the
+second, which breaks the moment a test renders.
 
 Stable across five consecutive runs, and the mutation still fails, so the test is both reliable and
 still sensitive.
