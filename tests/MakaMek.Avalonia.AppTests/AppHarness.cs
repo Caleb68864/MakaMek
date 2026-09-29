@@ -5,6 +5,12 @@ using Sanet.MakaMek.Avalonia;
 using Sanet.MakaMek.Avalonia.Desktop.DependencyInjection;
 using Sanet.MVVM.DI.Avalonia.Extensions;
 
+// PerAssembly matters here, and is not cosmetic. The default isolates the Avalonia runtime per
+// test, but AvaloniaDispatcherService.Scheduler hands out the static AvaloniaScheduler.Instance,
+// which binds to whichever dispatcher first used it. With per test isolation, a view model
+// subscribing through that scheduler in the second test posts its work to the first test's dead
+// dispatcher and receives nothing at all - silently, because an Rx subscription that never
+// delivers looks exactly like a game that never published.
 [assembly: AvaloniaTestApplication(typeof(MakaMek.Avalonia.AppTests.AppHarness))]
 
 namespace MakaMek.Avalonia.AppTests;
