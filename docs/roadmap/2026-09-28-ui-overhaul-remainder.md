@@ -105,9 +105,15 @@ It predates the split, so it binds to a view-model surface that has since change
 Treat it as **raw material to rebase, not as a branch to propose**: re-cut from `main` on top of the
 merged layers, then fix the bindings against the final view models.
 
-Budget for binding drift. A wrong binding path in Avalonia fails **silently at runtime** — no compile
-error, no exception, just an empty control — so this layer needs to be run and looked at, not merely
-compiled and unit-tested. Use the `run` skill to launch the desktop head and drive it to a HUD screen.
+Budget for binding drift, but not for the reason you might expect. `MakaMek.Avalonia` sets
+`AvaloniaUseCompiledBindingsByDefault` and the views declare `x:DataType`, so a binding path that no
+longer exists on the view model is a **build error**, not a silent empty control. That half is caught
+for you.
+
+What is not caught: a path that still compiles but now means something different, a style or template
+that stops matching, a control that renders but is not hit-testable, and layout that collapses once
+the real content is in place. None of those fail a build or a view model test. This layer needs to be
+run and looked at.
 
 **This layer probably wants splitting**, on the evidence above: roughly 700 lines of `.axaml` across
 eight files, of which `BattleMapView` and `UnitStatusBarItem` are the substantial parts. A sensible cut
