@@ -25,7 +25,7 @@ namespace MakaMek.Avalonia.AppTests;
 public class BannerRenderingTests
 {
     [Fact]
-    public Task BattleMapView_BindsItsNotificationQueue_ToTheBanner() => Run(() =>
+    public Task BattleMapView_BindsItsNotificationQueue_ToTheBanner() => HarnessSession.Run(() =>
     {
         var (window, view, viewModel) = ShowBattleMap();
         try
@@ -48,7 +48,7 @@ public class BannerRenderingTests
     });
 
     [Fact]
-    public Task Banner_RendersEachAnnouncement_InQueueOrder() => Run(() =>
+    public Task Banner_RendersEachAnnouncement_InQueueOrder() => HarnessSession.Run(() =>
     {
         var (window, view, viewModel) = ShowBattleMap();
         try
@@ -100,9 +100,4 @@ public class BannerRenderingTests
         Dispatcher.UIThread.RunJobs();
     }
 
-    private static Task Run(Action body)
-    {
-        var session = HeadlessUnitTestSession.GetOrStartForAssembly(typeof(BannerRenderingTests).Assembly);
-        return session.Dispatch(body, CancellationToken.None);
-    }
 }

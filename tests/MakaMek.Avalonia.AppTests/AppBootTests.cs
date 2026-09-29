@@ -13,7 +13,7 @@ namespace MakaMek.Avalonia.AppTests;
 public class AppBootTests
 {
     [Fact]
-    public Task App_Boots_AndBuildsItsServiceProvider() => Run(() =>
+    public Task App_Boots_AndBuildsItsServiceProvider() => HarnessSession.Run(() =>
     {
         var app = Application.Current as App;
         app.ShouldNotBeNull("the headless platform should have started the real App");
@@ -21,7 +21,7 @@ public class AppBootTests
     });
 
     [Fact]
-    public Task MainWindow_Shows_AndRenders() => Run(() =>
+    public Task MainWindow_Shows_AndRenders() => HarnessSession.Run(() =>
     {
         var window = new Sanet.MakaMek.Avalonia.Views.MainWindow();
         window.Show();
@@ -53,35 +53,5 @@ public class AppBootTests
         return seen.Count;
     }
 
-    /// <summary>
-    /// Only accepts a synchronous body, and has a Func&lt;Task&gt; sibling below. The pair exists
-    /// because HeadlessUnitTestSession.Dispatch has no Func&lt;Task&gt; overload: an async lambda
-    /// binds to Action, the returned task is dropped, and every assertion inside it is discarded
-    /// while the test still reports green. That cost this repo 23 silently passing tests once.
-    /// </summary>
-    private static Task Run(Action body)
-    {
-        var session = HeadlessUnitTestSession.GetOrStartForAssembly(typeof(AppBootTests).Assembly);
-        return session.Dispatch(body, CancellationToken.None);
-    }
 
-    /// <summary>
-    /// Runs async work on the headless dispatcher.
-    ///
-    /// The body is wrapped so that it returns a value, which is what forces the
-    /// Func&lt;Task&lt;T&gt;&gt; overload of Dispatch. Passing a Func&lt;Task&gt; - even a typed
-    /// variable, not just an inline async lambda - binds to the Action overload instead, making it
-    /// async void: the task is dropped and every assertion failure inside is swallowed while the
-    /// test still reports green. Verified by mutation: an impossible assertion passed until this
-    /// wrapper was added.
-    /// </summary>
-    private static Task Run(Func<Task> body)
-    {
-        var session = HeadlessUnitTestSession.GetOrStartForAssembly(typeof(AppBootTests).Assembly);
-        return session.Dispatch(async () =>
-        {
-            await body();
-            return true;
-        }, CancellationToken.None);
-    }
 }

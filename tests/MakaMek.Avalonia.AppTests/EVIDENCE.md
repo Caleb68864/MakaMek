@@ -65,6 +65,34 @@ The test lives on a combined branch rather than here: this project is cut from `
 `TurnNotificationKind.Initiative` only exists on the feature branch. That is the intended shape.
 The harness is infrastructure to be merged into a feature branch when verifying that feature.
 
+## Test isolation: why view models are built with a per test dispatcher
+
+Symptom: a test that ran a real game passed alone and failed when run with the others, and failed
+*completely* - the view model received no commands at all, while the game itself published
+everything correctly.
+
+Cause: `AvaloniaDispatcherService.Scheduler` returns the static `AvaloniaScheduler.Instance`, which
+binds to whichever dispatcher first uses it. Constructing a `BattleMapViewModel` binds it. The
+headless session isolates the application per test, so the second test to construct one subscribes
+through a scheduler bound to a dispatcher that no longer exists, and `ObserveOn` delivers nothing.
+Proved with a probe: scheduling a trivial action on that scheduler and pumping never ran it.
+
+Fix: build view models with `ActivatorUtilities.CreateInstance<BattleMapViewModel>(services,
+dispatcher)` passing a `TestDispatcherService` whose scheduler is a per instance
+`EventLoopScheduler`. Delivery stays genuinely deferred, which matters, because deferred delivery is
+what caused the defect this harness found. An immediate scheduler would have hidden it.
+
+Stable across five consecutive runs, and the mutation still fails, so the test is both reliable and
+still sensitive.
+
+**Two wrong turns worth recording**, because both looked convincing:
+
+1. Disabling xUnit parallelism. It is not a race between tests, it is a static bound once.
+2. Pumping the dispatcher at `SystemIdle` priority. One run went green and I called it fixed. It was
+   test ordering luck: raising the wait budget afterwards made things *worse*, which is what proved
+   the condition never becomes true rather than arriving late. A fix that only sometimes works is
+   indistinguishable from a fix, for exactly one run.
+
 ## What this harness is *not* for
 
 Compiled bindings are on by default in `MakaMek.Avalonia` and the views declare `x:DataType`, so a
