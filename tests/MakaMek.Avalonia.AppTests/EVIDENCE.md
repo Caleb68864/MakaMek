@@ -22,6 +22,8 @@ claims it for a stub `TestApp`, and only one headless platform may exist per ass
 |---|---|---|---|---|
 | 2026-09-29 | *(motivating case, not a harness catch)* initiative winner banner, PR #1534 | 10 tests green; mutation showed **1 of 14** could detect the defect | n/a — harness did not exist yet. The maintainer found it by playing the game: *"I don't see Initiative results banners, the movement phase one comes right after the initiative phase announcement, nothing in between"* | Yes, and he did. That is the cost this harness is meant to remove |
 | 2026-09-29 | harness itself — boot and render | n/a | Real `App` boots headlessly, builds its `ServiceProvider`, and `MainWindow` renders a frame with varying pixels. No blockers in `RegisterDesktopServices` | n/a |
+| 2026-09-29 | banner binding chain, `BattleMapView` to `TurnNotificationBanner` | control tests build the banner standalone; view model tests never render. Nothing covered the join | Binding resolves and the queue reaches the control inside the real view, with a view model from the real service graph | No. This is a gap neither side's tests reach |
+| 2026-09-29 | *(negative result, recorded deliberately)* can the harness catch a broken binding path? | n/a | **No, and it does not need to.** Typing `TurnNotificationsTypo` into `BattleMapView.axaml` fails the **build**: this project sets `AvaloniaUseCompiledBindingsByDefault` and the view declares `x:DataType`, so a bad path is a compile error, not a silent runtime failure | The compiler catches it first |
 
 ## Rules for entries
 
@@ -32,3 +34,12 @@ claims it for a stub `TestApp`, and only one headless platform may exist per ass
   that the gap is real and not self-assessed.
 - Note where a defect was reachable only by rendering or navigating. Those are the rows that justify
   a headless *application* harness rather than more view tests.
+
+## What this harness is *not* for
+
+Compiled bindings are on by default in `MakaMek.Avalonia` and the views declare `x:DataType`, so a
+misspelled binding path is a build error. Do not justify this project on catching those; the compiler
+is faster and more reliable at it. The gap it covers is narrower and harder to reach: whether an
+announcement actually arrives on screen, in what order, and whether the assembled application
+behaves once DI, navigation and rendering are all involved. Those are invisible to the compiler and
+to view model tests alike.
