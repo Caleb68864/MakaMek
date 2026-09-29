@@ -65,9 +65,23 @@ public class AppBootTests
         return session.Dispatch(body, CancellationToken.None);
     }
 
+    /// <summary>
+    /// Runs async work on the headless dispatcher.
+    ///
+    /// The body is wrapped so that it returns a value, which is what forces the
+    /// Func&lt;Task&lt;T&gt;&gt; overload of Dispatch. Passing a Func&lt;Task&gt; - even a typed
+    /// variable, not just an inline async lambda - binds to the Action overload instead, making it
+    /// async void: the task is dropped and every assertion failure inside is swallowed while the
+    /// test still reports green. Verified by mutation: an impossible assertion passed until this
+    /// wrapper was added.
+    /// </summary>
     private static Task Run(Func<Task> body)
     {
         var session = HeadlessUnitTestSession.GetOrStartForAssembly(typeof(AppBootTests).Assembly);
-        return session.Dispatch(body, CancellationToken.None);
+        return session.Dispatch(async () =>
+        {
+            await body();
+            return true;
+        }, CancellationToken.None);
     }
 }

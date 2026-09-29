@@ -24,7 +24,8 @@ claims it for a stub `TestApp`, and only one headless platform may exist per ass
 | 2026-09-29 | harness itself — boot and render | n/a | Real `App` boots headlessly, builds its `ServiceProvider`, and `MainWindow` renders a frame with varying pixels. No blockers in `RegisterDesktopServices` | n/a |
 | 2026-09-29 | banner binding chain, `BattleMapView` to `TurnNotificationBanner` | control tests build the banner standalone; view model tests never render. Nothing covered the join | Binding resolves and the queue reaches the control inside the real view, with a view model from the real service graph | No. This is a gap neither side's tests reach |
 | 2026-09-29 | *(negative result, recorded deliberately)* can the harness catch a broken binding path? | n/a | **No, and it does not need to.** Typing `TurnNotificationsTypo` into `BattleMapView.axaml` fails the **build**: this project sets `AvaloniaUseCompiledBindingsByDefault` and the view declares `x:DataType`, so a bad path is a compile error, not a silent runtime failure | The compiler catches it first |
-
+| 2026-09-29 | bundled units load with no network, via `LocalFolderResourceStreamProvider` over the repo's `data/` folder | nothing covered this; the app's configured source is remote | 199 `.mmux` units load in-process, so a harness game needs no network | n/a |
+| 2026-09-29 | **the harness's own async helper** | the test was green | **The helper was vacuous.** An impossible assertion inside `Run(Func<Task>)` passed. Fixed by wrapping the body to return a value, which forces the `Func<Task<T>>` overload. Mutation now fails as it should | No. Only a mutation check found it |
 ## Rules for entries
 
 - Record what the **existing** tests said first. The argument for this project is the gap between
@@ -34,6 +35,22 @@ claims it for a stub `TestApp`, and only one headless platform may exist per ass
   that the gap is real and not self-assessed.
 - Note where a defect was reachable only by rendering or navigating. Those are the rows that justify
   a headless *application* harness rather than more view tests.
+
+## The dispatch trap, stated precisely
+
+`HeadlessUnitTestSession.Dispatch` will silently swallow every assertion failure in async work unless
+the body returns a value.
+
+- `Dispatch(async () => { ... })` — swallowed. Binds to the `Action` overload, becomes `async void`.
+- `Dispatch(typedFuncTaskVariable)` — **also swallowed.** Typing the delegate does not save you; this
+  was verified by mutation on this project's own helper, which reported green against an impossible
+  assertion.
+- `Dispatch(async () => { await body(); return true; })` — propagates. Returning a value is what
+  selects the `Func<Task<T>>` overload.
+
+Earlier vault guidance said the API "has no `Func<Task>` overload". That is the wrong diagnosis: the
+overload resolution is the problem, and the cure is returning a value. Any new async headless test
+must be mutation-checked once before it is trusted.
 
 ## What this harness is *not* for
 
