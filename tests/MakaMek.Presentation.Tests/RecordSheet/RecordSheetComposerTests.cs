@@ -163,10 +163,10 @@ public class RecordSheetComposerTests
             {
                 [PartLocation.CenterTorso] =
                 [
-                    new RecordSheetCriticalSlotData(1, "Engine", CriticalSlotState.Intact),
-                    new RecordSheetCriticalSlotData(2, "Gyro", CriticalSlotState.Hit),
-                    new RecordSheetCriticalSlotData(3, null, CriticalSlotState.Empty),
-                    new RecordSheetCriticalSlotData(4, "Sensors", CriticalSlotState.Destroyed)
+                    new RecordSheetCriticalSlotData(0, "Engine", CriticalSlotState.Intact),
+                    new RecordSheetCriticalSlotData(1, "Gyro", CriticalSlotState.Hit),
+                    new RecordSheetCriticalSlotData(2, null, CriticalSlotState.Empty),
+                    new RecordSheetCriticalSlotData(3, "Sensors", CriticalSlotState.Destroyed)
                 ]
             }
         };
@@ -185,10 +185,11 @@ public class RecordSheetComposerTests
     [Fact]
     public async Task ComposeAsync_LaysOutAllTwelveCriticalSlots_AsTwoGroupsOfSix()
     {
-        // Slot numbers are 1-based. Dividing them directly put slot 1 in the second row, split the
-        // columns at 6/7 rather than 7/8, and computed column 2 for slot 12, which dropped it.
+        // Slot indexes are 0-based, the way RecordSheetDiagramData.FromUnit emits them. Shifting
+        // them as if they were 1-based drew index 0 a row above the table and split the columns
+        // at 7 and 5.
         var composer = CreateComposer(out _);
-        var slots = Enumerable.Range(1, 12)
+        var slots = Enumerable.Range(0, 12)
             .Select(slot => new RecordSheetCriticalSlotData(slot, $"Item{slot}", CriticalSlotState.Intact))
             .ToList();
         var data = RecordSheetDiagramData.FromUnit(CreateMech()) with
@@ -201,10 +202,10 @@ public class RecordSheetComposerTests
 
         var svg = await Compose(composer, data);
 
-        for (var slot = 1; slot <= 12; slot++)
+        for (var slot = 0; slot < 12; slot++)
             svg.ShouldContain($"data-critical-slot=\"{slot}\"");
 
-        // Slots 1 and 7 head their columns, so they share the topmost y of the table.
+        // Indexes 0 and 6 head their columns, so they share the topmost y of the table.
         var cells = System.Xml.Linq.XDocument.Parse(svg)
             .Descendants()
             .Where(e => e.Attribute("data-critical-slot") is not null)
@@ -212,10 +213,11 @@ public class RecordSheetComposerTests
                 e => int.Parse((string)e.Attribute("data-critical-slot")!),
                 e => (X: (string)e.Attribute("x")!, Y: (string)e.Attribute("y")!));
 
-        cells[1].Y.ShouldBe(cells[7].Y, "slot 1 and slot 7 are both first in their column");
-        cells[1].X.ShouldNotBe(cells[7].X, "and they are in different columns");
-        cells[6].X.ShouldBe(cells[1].X, "slot 6 closes the first column");
-        cells[12].X.ShouldBe(cells[7].X, "slot 12 closes the second");
+        cells[0].Y.ShouldBe(cells[6].Y, "index 0 and index 6 are both first in their column");
+        cells[0].X.ShouldNotBe(cells[6].X, "and they are in different columns");
+        cells[5].X.ShouldBe(cells[0].X, "index 5 closes the first column");
+        cells[11].X.ShouldBe(cells[6].X, "index 11 closes the second");
+        cells.Values.Select(cell => cell.Y).Distinct().Count().ShouldBe(6, "six rows, none above the table");
     }
 
     [Fact]
