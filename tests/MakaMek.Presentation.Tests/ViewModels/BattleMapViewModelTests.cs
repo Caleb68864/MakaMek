@@ -1,9 +1,11 @@
+using AsyncAwaitBestPractices.MVVM;
 using Microsoft.Extensions.Logging;
 using System.Reactive.Concurrency;
 using System.Reactive.Subjects;
 using NSubstitute;
 using Sanet.MakaMek.Assets.Services;
 using Sanet.MakaMek.Core.Data.Game;
+using Sanet.MakaMek.Core.Data.Game.Commands;
 using Sanet.MakaMek.Core.Data.Game.Commands.Client;
 using Sanet.MakaMek.Core.Data.Game.Commands.Server;
 using Sanet.MakaMek.Core.Data.Game.Mechanics;
@@ -177,6 +179,346 @@ public class BattleMapViewModelTests
         PlayerId = playerId,
         UnitsToPlay = 0
     });
+
+    /// <summary>
+    /// Joins a local player that owns a unit, so it counts towards <see cref="IGame.AlivePlayers"/>.
+    /// JoinPlayer deliberately joins without units, which leaves the player unable to act.
+    /// </summary>
+    private Player JoinPlayerWithUnit(string name, string tint, int unitCount = 1)
+    {
+        var player = new Player(Guid.NewGuid(), name, PlayerControlType.Human, tint);
+        JoinGameCommand? sentJoinCommand = null;
+        _commandPublisher.When(publisher => publisher.PublishCommand(Arg.Any<IGameCommand>()))
+            .Do(callInfo =>
+            {
+                if (callInfo.Arg<IGameCommand>() is JoinGameCommand joinCommand)
+                    sentJoinCommand = joinCommand;
+            });
+        _game.JoinGameWithUnits(player,
+            Enumerable.Range(0, unitCount)
+                .Select(_ => MechFactoryTests.CreateDummyMechData() with { Id = Guid.NewGuid() }).ToList(), []);
+        sentJoinCommand.ShouldNotBeNull();
+        _game.HandleCommand(sentJoinCommand.Value with { GameOriginId = Guid.NewGuid() });
+        return player;
+    }
+
+    private void SetPhase(PhaseNames phase)
+        => _game.HandleCommand(new ChangePhaseCommand { GameOriginId = Guid.NewGuid(), Phase = phase });
+
+    private void RollInitiative(Guid playerId, int roll)
+        => _game.HandleCommand(new DiceRolledCommand
+        {
+            GameOriginId = Guid.NewGuid(),
+            PlayerId = playerId,
+            Roll = roll
+        });
+
+    private List<TurnNotification> InitiativeAnnouncements() => _sut.TurnNotifications
+        .Where(notification => notification.Kind == TurnNotificationKind.Initiative)
+        .ToList();
+
+    [Fact]
+    public void InitiativeWinner_IsAnnounced_WhenTheRealServerSequenceIsReplayed()
+    {
+        // Replays exactly what InitiativePhase.AutoRollForAllPlayers publishes: an active-player
+        // change before each roll, then the phase move. The existing test sends only the two rolls,
+        // which is not what a running game looks like.
+        _localizationService.GetString("BattleMap_Notification_InitiativeWinner")
+            .Returns("{0} won with {1}");
+        var winner = JoinPlayerWithUnit("Winner", "#FF0000");
+        var loser = JoinPlayerWithUnit("Loser", "#00FF00");
+
+        _game.HandleCommand(new TurnIncrementedCommand { GameOriginId = Guid.NewGuid(), TurnNumber = 1 });
+        SetPhase(PhaseNames.Initiative);
+        SetActivePlayer(winner);
+        RollInitiative(winner.Id, 10);
+        SetActivePlayer(loser);
+        RollInitiative(loser.Id, 4);
+        SetPhase(PhaseNames.Movement);
+
+        // Position, not just presence. The first version of this test asserted only that an
+        // Initiative notification existed, which passed while the banner was being announced
+        // before the phase it reports on - the maintainer found that by playing the game.
+        _sut.TurnNotifications.Select(n => n.Kind).ShouldBe([
+            TurnNotificationKind.Turn,
+            TurnNotificationKind.Phase,        // initiative phase
+            TurnNotificationKind.Initiative,   // who won it
+            TurnNotificationKind.Phase,        // movement phase
+            TurnNotificationKind.ActivePlayer,
+            TurnNotificationKind.ActivePlayer
+        ]);
+    }
+
+    [Fact]
+    public void InitiativeWinner_IsAnnouncedAfterItsPhase_WhenATieIsRerolled()
+    {
+        // Replays the reroll path: every player rolls, ties, then the tied players roll again.
+        _localizationService.GetString("BattleMap_Notification_InitiativeWinner").Returns("{0} won with {1}");
+        var first = JoinPlayerWithUnit("First", "#FF0000");
+        var second = JoinPlayerWithUnit("Second", "#00FF00");
+
+        _game.HandleCommand(new TurnIncrementedCommand { GameOriginId = Guid.NewGuid(), TurnNumber = 1 });
+        SetPhase(PhaseNames.Initiative);
+        SetActivePlayer(first);
+        RollInitiative(first.Id, 7);
+        SetActivePlayer(second);
+        RollInitiative(second.Id, 7);          // tie - nothing to announce yet
+        InitiativeAnnouncements().ShouldBeEmpty();
+        SetActivePlayer(first);
+        RollInitiative(first.Id, 9);           // reroll, broken once the other tied player answers
+        SetActivePlayer(second);
+        RollInitiative(second.Id, 5);
+        SetPhase(PhaseNames.Movement);
+
+        var kinds = _sut.TurnNotifications.Select(n => n.Kind).ToList();
+        kinds.IndexOf(TurnNotificationKind.Initiative)
+            .ShouldBeGreaterThan(kinds.IndexOf(TurnNotificationKind.Phase),
+                "the winner must follow the initiative phase banner, not precede it");
+        kinds.IndexOf(TurnNotificationKind.Initiative)
+            .ShouldBeLessThan(kinds.LastIndexOf(TurnNotificationKind.Phase),
+                "and must precede the movement phase banner");
+    }
+
+    [Fact]
+    public void InitiativeWinner_IsAnnouncedAfterItsPhase_WithThreePlayers()
+    {
+        _localizationService.GetString("BattleMap_Notification_InitiativeWinner").Returns("{0} won with {1}");
+        var a = JoinPlayerWithUnit("A", "#FF0000");
+        var b = JoinPlayerWithUnit("B", "#00FF00");
+        var c = JoinPlayerWithUnit("C", "#0000FF");
+
+        _game.HandleCommand(new TurnIncrementedCommand { GameOriginId = Guid.NewGuid(), TurnNumber = 1 });
+        SetPhase(PhaseNames.Initiative);
+        SetActivePlayer(a); RollInitiative(a.Id, 5);
+        SetActivePlayer(b); RollInitiative(b.Id, 11);
+        SetActivePlayer(c); RollInitiative(c.Id, 8);
+        SetPhase(PhaseNames.Movement);
+
+        var announcement = InitiativeAnnouncements().ShouldHaveSingleItem();
+        announcement.Text.ShouldBe("B WON WITH 11");
+        var kinds = _sut.TurnNotifications.Select(n => n.Kind).ToList();
+        kinds.IndexOf(TurnNotificationKind.Initiative)
+            .ShouldBeGreaterThan(kinds.IndexOf(TurnNotificationKind.Phase));
+    }
+
+    [Fact]
+    public void InitiativeWinner_IsStillAnnounced_WhenEarlierBannersHaveAlreadyBeenShown()
+    {
+        // The banner control removes each notification once it has animated, so by the time the
+        // last roll lands the queue may be empty. The winner must still be announced.
+        _localizationService.GetString("BattleMap_Notification_InitiativeWinner").Returns("{0} won with {1}");
+        var winner = JoinPlayerWithUnit("Winner", "#FF0000");
+        var loser = JoinPlayerWithUnit("Loser", "#00FF00");
+
+        _game.HandleCommand(new TurnIncrementedCommand { GameOriginId = Guid.NewGuid(), TurnNumber = 1 });
+        SetPhase(PhaseNames.Initiative);
+        SetActivePlayer(winner);
+        RollInitiative(winner.Id, 10);
+        _sut.TurnNotifications.Clear();        // everything queued so far has been shown
+        SetActivePlayer(loser);
+        RollInitiative(loser.Id, 4);
+
+        InitiativeAnnouncements().ShouldHaveSingleItem().Text.ShouldBe("WINNER WON WITH 10");
+    }
+
+    private void SetActivePlayer(Player player)
+        => _game.HandleCommand(new ChangeActivePlayerCommand
+        {
+            GameOriginId = Guid.NewGuid(),
+            PlayerId = player.Id,
+            UnitsToPlay = 0
+        });
+
+    [Fact]
+    public void InitiativeWinner_IsAnnounced_OnceEveryPlayerHasRolled()
+    {
+        _localizationService.GetString("BattleMap_Notification_InitiativeWinner")
+            .Returns("{0} won with {1}");
+        var winner = JoinPlayerWithUnit("Winner", "#FF0000");
+        var loser = JoinPlayerWithUnit("Loser", "#00FF00");
+        SetPhase(PhaseNames.Initiative);
+
+        RollInitiative(winner.Id, 10);
+        RollInitiative(loser.Id, 4);
+
+        // The result is an announcement, not a label, so it does not wait for the phase to move on.
+        var announcement = InitiativeAnnouncements().ShouldHaveSingleItem();
+        announcement.Text.ShouldBe("WINNER WON WITH 10");
+        announcement.Tint.ShouldBe("#FF0000");
+    }
+
+    [Fact]
+    public void InitiativeWinner_IsNotAnnounced_WhileAnyRollIsMissing()
+    {
+        var first = JoinPlayerWithUnit("First", "#FF0000");
+        JoinPlayerWithUnit("Second", "#00FF00");
+        SetPhase(PhaseNames.Initiative);
+
+        RollInitiative(first.Id, 8);
+
+        InitiativeAnnouncements().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void InitiativeWinner_IsNotAnnounced_WhenTheHighestRollIsTied()
+    {
+        var first = JoinPlayerWithUnit("First", "#FF0000");
+        var second = JoinPlayerWithUnit("Second", "#00FF00");
+        SetPhase(PhaseNames.Initiative);
+
+        RollInitiative(first.Id, 7);
+        RollInitiative(second.Id, 7);
+
+        InitiativeAnnouncements().ShouldBeEmpty("a tie has no winner to announce");
+    }
+
+    [Fact]
+    public void InitiativeWinner_IsAnnounced_AfterATieIsRerolled()
+    {
+        _localizationService.GetString("BattleMap_Notification_InitiativeWinner")
+            .Returns("{0} won with {1}");
+        var first = JoinPlayerWithUnit("First", "#FF0000");
+        var second = JoinPlayerWithUnit("Second", "#00FF00");
+        SetPhase(PhaseNames.Initiative);
+        RollInitiative(first.Id, 7);
+        RollInitiative(second.Id, 7);
+
+        // A tie is re-rolled server side, so the replacement rolls arrive for the same players.
+        RollInitiative(first.Id, 9);
+        RollInitiative(second.Id, 5);
+
+        InitiativeAnnouncements().ShouldHaveSingleItem().Text.ShouldBe("FIRST WON WITH 9");
+    }
+
+    [Fact]
+    public void InitiativeWinner_IsAnnouncedOnce_WhenTheSameRollsArriveAgain()
+    {
+        var winner = JoinPlayerWithUnit("Winner", "#FF0000");
+        var loser = JoinPlayerWithUnit("Loser", "#00FF00");
+        SetPhase(PhaseNames.Initiative);
+        RollInitiative(winner.Id, 10);
+        RollInitiative(loser.Id, 4);
+
+        RollInitiative(loser.Id, 4);
+
+        InitiativeAnnouncements().ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public void InitiativeWinner_IsNotAnnounced_UntilEveryTiedPlayerHasRerolled()
+    {
+        _localizationService.GetString("BattleMap_Notification_InitiativeWinner").Returns("{0} won with {1}");
+        var first = JoinPlayerWithUnit("First", "#FF0000");
+        var second = JoinPlayerWithUnit("Second", "#00FF00");
+        SetPhase(PhaseNames.Initiative);
+        RollInitiative(first.Id, 7);
+        RollInitiative(second.Id, 7);
+
+        // Only one of the two tied players has re-rolled, so the round they tie-break is not over:
+        // the other one still has a say in who goes first.
+        RollInitiative(first.Id, 9);
+        InitiativeAnnouncements().ShouldBeEmpty("the tied player that has not re-rolled decides the round");
+
+        RollInitiative(second.Id, 5);
+        InitiativeAnnouncements().ShouldHaveSingleItem().Text.ShouldBe("FIRST WON WITH 9");
+    }
+
+    [Fact]
+    public void InitiativeWinner_IsTheTopReroller_NotAPlayerTheRerollLeftBehind()
+    {
+        // Only the players tied at the previous highest roll re-roll, so a player outside the tie
+        // keeps the roll it already had. Reading the re-rolls as if every player had re-rolled
+        // announced that player, who had in fact lost the round before the re-roll was called.
+        _localizationService.GetString("BattleMap_Notification_InitiativeWinner").Returns("{0} won with {1}");
+        var first = JoinPlayerWithUnit("First", "#FF0000");
+        var second = JoinPlayerWithUnit("Second", "#00FF00");
+        var leftBehind = JoinPlayerWithUnit("LeftBehind", "#0000FF");
+        SetPhase(PhaseNames.Initiative);
+
+        RollInitiative(first.Id, 10);
+        RollInitiative(second.Id, 10);       // first and second tie for the lead
+        RollInitiative(leftBehind.Id, 9);    // left behind, it is not in the re-roll
+        InitiativeAnnouncements().ShouldBeEmpty("the lead is tied, so there is no winner yet");
+
+        RollInitiative(first.Id, 2);
+        InitiativeAnnouncements().ShouldBeEmpty("the round is over only once both tied players re-rolled");
+
+        RollInitiative(second.Id, 3);
+
+        InitiativeAnnouncements().ShouldHaveSingleItem().Text.ShouldBe("SECOND WON WITH 3");
+    }
+
+    [Fact]
+    public void InitiativeWinner_IsAnnounced_OnEveryTurnItIsRolled()
+    {
+        _localizationService.GetString("BattleMap_Notification_InitiativeWinner").Returns("{0} won with {1}");
+        var winner = JoinPlayerWithUnit("Winner", "#FF0000");
+        var loser = JoinPlayerWithUnit("Loser", "#00FF00");
+
+        _game.HandleCommand(new TurnIncrementedCommand { GameOriginId = Guid.NewGuid(), TurnNumber = 1 });
+        SetPhase(PhaseNames.Initiative);
+        RollInitiative(winner.Id, 10);
+        RollInitiative(loser.Id, 4);
+        SetPhase(PhaseNames.Movement);
+
+        // The same player wins again: the turn increment is what allows a second announcement.
+        _game.HandleCommand(new TurnIncrementedCommand { GameOriginId = Guid.NewGuid(), TurnNumber = 2 });
+        SetPhase(PhaseNames.Initiative);
+        RollInitiative(winner.Id, 8);
+        RollInitiative(loser.Id, 3);
+
+        InitiativeAnnouncements().Select(notification => notification.Text)
+            .ShouldBe(["WINNER WON WITH 10", "WINNER WON WITH 8"]);
+    }
+
+    [Fact]
+    public void InitiativeWinner_IsAnnouncedAgain_OnTheNextTurn()
+    {
+        var winner = JoinPlayerWithUnit("Winner", "#FF0000");
+        var loser = JoinPlayerWithUnit("Loser", "#00FF00");
+        SetPhase(PhaseNames.Initiative);
+        RollInitiative(winner.Id, 10);
+        RollInitiative(loser.Id, 4);
+
+        _game.HandleCommand(new TurnIncrementedCommand { GameOriginId = Guid.NewGuid(), TurnNumber = 2 });
+        RollInitiative(winner.Id, 11);
+        RollInitiative(loser.Id, 3);
+
+        InitiativeAnnouncements().Count.ShouldBe(2, "each turn has its own initiative result");
+    }
+
+    [Fact]
+    public void InitiativeRolls_AreIgnoredOutsideTheInitiativePhase()
+    {
+        var player = JoinPlayerWithUnit("Player1", "#FF0000");
+        SetPhase(PhaseNames.Movement);
+
+        RollInitiative(player.Id, 11);
+
+        InitiativeAnnouncements().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void InitiativeAnnouncement_ComesAfterTheTurnAndBeforeThePhase()
+    {
+        var winner = JoinPlayerWithUnit("Winner", "#FF0000");
+        var loser = JoinPlayerWithUnit("Loser", "#00FF00");
+        SetPhase(PhaseNames.Initiative);
+        _sut.TurnNotifications.Clear();
+
+        // All three land before anything has been shown, so the queue has to order them itself.
+        _game.HandleCommand(new TurnIncrementedCommand { GameOriginId = Guid.NewGuid(), TurnNumber = 2 });
+        RollInitiative(winner.Id, 10);
+        RollInitiative(loser.Id, 4);
+        SetPhase(PhaseNames.Movement);
+
+        _sut.TurnNotifications.Select(notification => notification.Kind).ShouldBe(
+        [
+            TurnNotificationKind.Turn,
+            TurnNotificationKind.Initiative,
+            TurnNotificationKind.Phase
+        ]);
+    }
 
     [Fact]
     public void IsLocalPlayerTurn_ShouldTrackWhoIsActive_AndNotifyOnChange()
@@ -1763,6 +2105,9 @@ public class BattleMapViewModelTests
         
         // Act & Assert
         _sut.IsWeaponSelectionVisible.ShouldBeTrue();
+
+        // The firing-arc legend follows the attacker, which this state has.
+        _sut.IsAttackOverlayVisible.ShouldBeTrue();
     }
 
     [Fact]
@@ -3358,6 +3703,786 @@ public class BattleMapViewModelTests
             },
             TerrainModifiers = []
         };
+    }
+
+    [Fact]
+    public async Task LocallyRejectedCommand_ShowsFeedback()
+    {
+        // A command that fails client-side validation is never published, so no ErrorCommand comes
+        // back for it and this is the only way the player is told.
+        _localizationService.GetString("Command_Error_ValidationFailed").Returns("Validation failed");
+        _localizationService.GetString("BattleMap_CommandRejected").Returns("Rejected: {0}");
+
+        // The player never joined, so the status update fails validation.
+        await _game.SetPlayerReady(new UpdatePlayerStatusCommand
+        {
+            GameOriginId = Guid.NewGuid(),
+            PlayerId = Guid.NewGuid(),
+            PlayerStatus = PlayerStatus.Ready
+        });
+
+        _sut.CommandFeedbackLabel.ShouldBe("Rejected: Validation failed");
+    }
+
+    [Fact]
+    public async Task LocallyRejectedCommand_ShowsNoFeedback_AfterTheHandlersAreDetached()
+    {
+        _localizationService.GetString("Command_Error_ValidationFailed").Returns("Validation failed");
+        _localizationService.GetString("BattleMap_CommandRejected").Returns("Rejected: {0}");
+
+        _sut.DetachHandlers();
+        await _game.SetPlayerReady(new UpdatePlayerStatusCommand
+        {
+            GameOriginId = Guid.NewGuid(),
+            PlayerId = Guid.NewGuid(),
+            PlayerStatus = PlayerStatus.Ready
+        });
+
+        _sut.CommandFeedbackLabel.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task TimedOutCommand_ShowsFeedback()
+    {
+        _localizationService.GetString("BattleMap_CommandTimedOut").Returns("No response from the server");
+        var game = CreateClientGameWithShortAckTimeout();
+        _sut.Game = game;
+        var player = new Player(Guid.NewGuid(), "Player1", PlayerControlType.Human, "#FF0000");
+
+        // Nothing echoes the join back, so the acknowledgement times out.
+        await game.JoinGameWithUnits(player, [], []);
+
+        _sut.CommandFeedbackLabel.ShouldBe("No response from the server");
+    }
+
+    [Fact]
+    public async Task TimedOutCommand_ShowsNoFeedback_AfterTheHandlersAreDetached()
+    {
+        // DetachHandlers drops the command subscriptions, so the timeout event has to go with
+        // them. Left attached, a detached view model keeps reacting to a game it no longer shows.
+        _localizationService.GetString("BattleMap_CommandTimedOut").Returns("No response from the server");
+        var game = CreateClientGameWithShortAckTimeout();
+        _sut.Game = game;
+        var player = new Player(Guid.NewGuid(), "Player1", PlayerControlType.Human, "#FF0000");
+
+        _sut.DetachHandlers();
+        await game.JoinGameWithUnits(player, [], []);
+
+        _sut.CommandFeedbackLabel.ShouldBeNull();
+    }
+
+    [Fact]
+    public void RejectedCommand_ShowsFeedbackThatTheNextAcceptedCommandClears()
+    {
+        _localizationService.GetString("Command_Error_ValidationFailed").Returns("Validation failed");
+        _localizationService.GetString("BattleMap_CommandRejected").Returns("Rejected: {0}");
+
+        _game.HandleCommand(new ErrorCommand
+        {
+            GameOriginId = Guid.NewGuid(),
+            IdempotencyKey = Guid.NewGuid(),
+            ErrorCode = ErrorCode.ValidationFailed
+        });
+
+        _sut.CommandFeedbackLabel.ShouldBe("Rejected: Validation failed");
+        _sut.IsCommandFeedbackVisible.ShouldBeTrue();
+
+        // Any subsequent accepted command clears the banner
+        _game.HandleCommand(new TurnIncrementedCommand { GameOriginId = Guid.NewGuid(), TurnNumber = 1 });
+
+        _sut.CommandFeedbackLabel.ShouldBeNull();
+        _sut.IsCommandFeedbackVisible.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void CommandFeedback_IsCleared_WhenTheGameIsReplaced()
+    {
+        _localizationService.GetString("Command_Error_ValidationFailed").Returns("Validation failed");
+        _localizationService.GetString("BattleMap_CommandRejected").Returns("Rejected: {0}");
+        _game.HandleCommand(new ErrorCommand
+        {
+            GameOriginId = Guid.NewGuid(),
+            IdempotencyKey = Guid.NewGuid(),
+            ErrorCode = ErrorCode.ValidationFailed
+        });
+        _sut.CommandFeedbackLabel.ShouldNotBeNull();
+
+        // A rejection from a finished game must not carry into the next one.
+        _sut.Game = null;
+
+        _sut.CommandFeedbackLabel.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// A client game whose acknowledgement timeout expires almost immediately, so a command that
+    /// is never acknowledged raises CommandTimedOut without the test waiting ten seconds.
+    /// </summary>
+    private ClientGame CreateClientGameWithShortAckTimeout() =>
+        new(new TotalWarfareRulesProvider(),
+            _mechFactory,
+            _commandPublisher,
+            Substitute.For<IToHitCalculator>(),
+            Substitute.For<IPilotingSkillCalculator>(),
+            Substitute.For<IConsciousnessCalculator>(),
+            Substitute.For<IHeatEffectsCalculator>(),
+            _mapFactory,
+            _hashService,
+            Substitute.For<ILogger<ClientGame>>(),
+            ackTimeoutMilliseconds: 20);
+
+    /// <summary>
+    /// Makes a player active with units still to play. SetActivePlayer leaves UnitsToPlay at zero.
+    /// </summary>
+    private void SetActivePlayerWithUnits(Guid playerId, int unitsToPlay)
+        => _game.HandleCommand(new ChangeActivePlayerCommand
+        {
+            GameOriginId = Guid.NewGuid(),
+            PlayerId = playerId,
+            UnitsToPlay = unitsToPlay
+        });
+
+    private List<IUnit> SetUpSquadNavigation(PhaseNames phase, int unitCount = 1)
+    {
+        var player = JoinPlayerWithUnit("Player1", "#FF0000", unitCount);
+        _game.SetBattleMap(BattleMapFactory.GenerateMap(4, 5,
+            new SingleTerrainGenerator(4, 5, new ClearTerrain())));
+        SetPhase(phase);
+        SetActivePlayerWithUnits(player.Id, unitCount);
+        var squad = _sut.LocalUnits.ToList();
+        foreach (var unit in squad)
+        {
+            var pilot = Substitute.For<IPilot>();
+            pilot.IsConscious.Returns(true);
+            unit.AssignPilot(pilot);
+        }
+        return squad;
+    }
+
+    [Fact]
+    public void SelectedUnit_UsesPhaseSelectionAndUpdatesSelectedUnitDetails_WithoutOpeningSheetOrPanning()
+    {
+        var unit = SetUpSquadNavigation(PhaseNames.End).Single();
+        _sut.CurrentState.ShouldBeOfType<EndState>();
+        unit.AddEvent(new UiEvent(UiEventType.ArmorDamage, "10"));
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+        var changed = new List<string>();
+        _sut.PropertyChanged += (_, args) => changed.Add(args.PropertyName!);
+
+        _sut.SelectedUnit = unit;
+
+        _sut.SelectedUnit.ShouldBe(unit);
+        _sut.CurrentState.SelectedUnit.ShouldBe(unit);
+        _sut.SelectedUnitEvents.ShouldHaveSingleItem().Type.ShouldBe(UiEventType.ArmorDamage);
+        _sut.SelectedUnitHeatProjection.Unit.ShouldBe(unit);
+        changed.ShouldContain(nameof(BattleMapViewModel.SelectedUnit));
+        changed.ShouldContain(nameof(BattleMapViewModel.IsRecordSheetPanelVisible));
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+        _sut.IsRecordSheetPanelVisible.ShouldBeFalse();
+        _sut.IsRecordSheetButtonVisible.ShouldBeTrue();
+        focused.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void SelectedUnit_WhenCanSelectUnitRejects_DoesNotChangeSelectionDetailsOrPan()
+    {
+        var squad = SetUpSquadNavigation(PhaseNames.End, 2);
+        squad[0].AddEvent(new UiEvent(UiEventType.ArmorDamage, "10"));
+        var state = Substitute.For<IUiState>();
+        state.SelectedUnit.Returns(squad[0]);
+        state.CanSelectUnit(squad[1]).Returns(false);
+        SetCurrentState(_sut, state);
+        _sut.NotifySelectedUnitChanged();
+        _sut.IsRecordSheetExpanded = true;
+        var events = _sut.SelectedUnitEvents;
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+        var changed = new List<string>();
+        _sut.PropertyChanged += (_, args) => changed.Add(args.PropertyName!);
+
+        _sut.SelectedUnit = squad[1];
+
+        state.DidNotReceive().HandleUnitSelectionFromList(Arg.Any<IUnit>());
+        _sut.SelectedUnit.ShouldBe(squad[0]);
+        _sut.SelectedUnitEvents.ShouldBeSameAs(events);
+        _sut.SelectedUnitHeatProjection.Unit.ShouldBe(squad[0]);
+        _sut.IsRecordSheetPanelVisible.ShouldBeTrue();
+        changed.ShouldBeEmpty();
+        focused.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void SelectedUnit_WhenWeaponsPhaseHandlerRejectsOwner_DoesNotChangeSelectionOrPan()
+    {
+        var first = JoinPlayerWithUnit("First", "#FF0000");
+        var active = JoinPlayerWithUnit("Active", "#00FF00");
+        SetPhase(PhaseNames.WeaponsAttack);
+        SetActivePlayerWithUnits(active.Id, 1);
+        var unit = _sut.LocalUnits.Single(u => u.Owner!.Id == active.Id);
+        var rejectedUnit = _sut.LocalUnits.Single(u => u.Owner!.Id == first.Id);
+        _sut.SelectedUnit = unit;
+        _sut.IsRecordSheetExpanded = true;
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+        _sut.CurrentState.CanSelectUnit(rejectedUnit).ShouldBeTrue();
+
+        _sut.SelectedUnit = rejectedUnit;
+
+        _sut.CurrentState.ShouldBeOfType<WeaponsAttackState>().CurrentStep
+            .ShouldBe(WeaponsAttackStep.ActionSelection);
+        _sut.SelectedUnit.ShouldBe(unit);
+        _sut.Attacker.ShouldBe(unit);
+        _sut.SelectedUnitHeatProjection.Unit.ShouldBe(unit);
+        _sut.IsRecordSheetPanelVisible.ShouldBeTrue();
+        focused.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void RecordSheet_FollowsSelectedUnit_AndBecomesInvisibleWhenSelectionIsCleared()
+    {
+        var squad = SetUpSquadNavigation(PhaseNames.End, 2);
+        squad[0].AddEvent(new UiEvent(UiEventType.ArmorDamage, "10"));
+        squad[1].AddEvent(new UiEvent(UiEventType.Explosion, "Ammo"));
+        _sut.SelectedUnit = squad[0];
+        _sut.ToggleRecordSheet();
+        _sut.IsRecordSheetPanelVisible.ShouldBeTrue();
+
+        _sut.SelectedUnit = squad[1];
+
+        _sut.SelectedUnit.ShouldBe(squad[1]);
+        _sut.SelectedUnitHeatProjection.Unit.ShouldBe(squad[1]);
+        _sut.SelectedUnitEvents.ShouldHaveSingleItem().Type.ShouldBe(UiEventType.Explosion);
+        _sut.IsRecordSheetPanelVisible.ShouldBeTrue();
+
+        _sut.SelectedUnit = null;
+
+        _sut.SelectedUnit.ShouldBeNull();
+        _sut.SelectedUnitHeatProjection.Unit.ShouldBeNull();
+        _sut.SelectedUnitEvents.ShouldBeEmpty();
+        _sut.IsRecordSheetPanelVisible.ShouldBeFalse();
+        _sut.IsRecordSheetButtonVisible.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void LocalUnits_IsEmpty_BeforeAnyLocalPlayerJoins()
+    {
+        _sut.IsAttackOverlayVisible.ShouldBeFalse("nothing is attacking outside the attack state");
+        _sut.LocalUnits.ShouldBeEmpty();
+        _sut.IsSquadStatusBarVisible.ShouldBeFalse();
+        _sut.IsNextAvailableUnitVisible.ShouldBeFalse();
+
+        // And before a game is attached at all, which is how the map is first built.
+        _sut.Game = null;
+
+        _sut.LocalUnits.ShouldBeEmpty();
+        _sut.IsSquadStatusBarVisible.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void LocalUnits_ContainsOnlyOurOwnUnits()
+    {
+        var player = JoinPlayerWithUnit("Player1", "#FF0000");
+        var remote = new Player(Guid.NewGuid(), "Opponent", PlayerControlType.Human, "#00FF00");
+        _game.HandleCommand(new JoinGameCommand
+        {
+            GameOriginId = Guid.NewGuid(),
+            PlayerId = remote.Id,
+            PlayerName = remote.Name,
+            Units = [MechFactoryTests.CreateDummyMechData()],
+            Tint = remote.Tint,
+            PilotAssignments = [],
+            IdempotencyKey = Guid.NewGuid()
+        });
+        SetPhase(PhaseNames.End);
+        SetActivePlayer(player.Id);
+
+        _sut.LocalUnits.Count().ShouldBe(1);
+        _sut.IsSquadStatusBarVisible.ShouldBeTrue();
+        _sut.IsNextAvailableUnitVisible.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task SelectNextAvailableUnit_CyclesThroughTheSquadAndFocusesEachUnit()
+    {
+        var squad = SetUpSquadNavigation(PhaseNames.End, 2);
+        _sut.CurrentState.ShouldBeOfType<EndState>();
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+        _sut.IsNextAvailableUnitVisible.ShouldBeTrue();
+
+        await ((AsyncCommand)_sut.NextAvailableUnitCommand).ExecuteAsync();
+        _sut.SelectedUnit.ShouldBe(squad[0]);
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+
+        await _sut.SelectNextAvailableUnit();
+        _sut.SelectedUnit.ShouldBe(squad[1]);
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+
+        await _sut.SelectNextAvailableUnit();
+        _sut.SelectedUnit.ShouldBe(squad[0]);
+        focused.ShouldBe([squad[0], squad[1], squad[0]]);
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+        _sut.IsRecordSheetPanelVisible.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SelectNextAvailableUnit_InEndState_BrowsesCompletedUnitsDuringRemotePlayersTurn()
+    {
+        var unit = SetUpSquadNavigation(PhaseNames.End).Single();
+        var position = new HexPosition(1, 1, HexDirection.Bottom);
+        unit.Deploy(position, null);
+        unit.Move(MovementPath.CreateSingleSegmentPath(position), null, true);
+        unit.DeclareWeaponAttack([]);
+        var remote = JoinPlayer("Opponent", "#00FF00", false);
+        SetActivePlayer(remote.Id);
+        _sut.CurrentState.ShouldBeOfType<EndState>();
+        _sut.CurrentState.CanHumanPlayerAct().ShouldBeFalse();
+        _sut.CurrentState.IsActiveHumanPlayer().ShouldBeFalse();
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+
+        await _sut.SelectNextAvailableUnit();
+
+        _sut.IsNextAvailableUnitVisible.ShouldBeTrue();
+        _sut.SelectedUnit.ShouldBe(unit);
+        focused.ShouldHaveSingleItem().ShouldBe(unit);
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SelectNextAvailableUnit_WhenMovementHandlerLosesPermission_DoesNotFocusRejectedUnit()
+    {
+        var unit = SetUpSquadNavigation(PhaseNames.Movement).Single();
+        var game = Substitute.For<IClientGame>();
+        var alivePlayers = _game.AlivePlayers;
+        game.Players.Returns(_game.Players);
+        game.AlivePlayers.Returns(alivePlayers);
+        game.LocalPlayers.Returns(_game.LocalPlayers);
+        game.PhaseStepState.Returns(_game.PhaseStepState);
+        game.TurnPhase.Returns(PhaseNames.Movement);
+        game.BattleMap.Returns(_game.BattleMap);
+        game.Commands.Returns(_game.Commands);
+        game.TurnChanges.Returns(_game.TurnChanges);
+        game.PhaseChanges.Returns(_game.PhaseChanges);
+        game.PhaseStepChanges.Returns(_game.PhaseStepChanges);
+        game.CanActivePlayerAct.Returns(true);
+        _sut.Game = game;
+        var state = new MovementState(_sut);
+        SetCurrentState(_sut, state);
+        state.CanSelectUnit(unit).ShouldBeTrue();
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+
+        // Availability allows the candidate, but the real movement handler must
+        // reject it if permission disappears before the selection is applied.
+        game.CanActivePlayerAct.Returns(true, false);
+        await _sut.SelectNextAvailableUnit();
+
+        _sut.SelectedUnit.ShouldBeNull();
+        state.CurrentMovementStep.ShouldBe(MovementStep.SelectingUnit);
+        _sut.SelectedUnitHeatProjection.Unit.ShouldBeNull();
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+        focused.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task SelectNextAvailableUnit_SkipsShutdownAndOutOfCommissionUnits()
+    {
+        var squad = SetUpSquadNavigation(PhaseNames.End, 3);
+        squad[0].Shutdown(new ShutdownData { Reason = ShutdownReason.Heat, Turn = 1 });
+        squad[1].Parts[PartLocation.Head].BlowOff().ShouldBeTrue();
+        squad[1].UpdateDestroyedStatus();
+        squad[0].IsShutdown.ShouldBeTrue();
+        squad[1].IsOutOfCommission.ShouldBeTrue();
+        _sut.IsNextAvailableUnitVisible.ShouldBeTrue();
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+
+        await _sut.SelectNextAvailableUnit();
+
+        _sut.SelectedUnit.ShouldBe(squad[2]);
+        focused.ShouldHaveSingleItem().ShouldBe(squad[2]);
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+
+        squad[2].Shutdown(new ShutdownData { Reason = ShutdownReason.Heat, Turn = 1 });
+        _sut.IsNextAvailableUnitVisible.ShouldBeFalse();
+        await _sut.SelectNextAvailableUnit();
+
+        _sut.SelectedUnit.ShouldBe(squad[2]);
+        focused.ShouldHaveSingleItem();
+    }
+
+    [Theory]
+    [InlineData("NoGame")]
+    [InlineData("Idle")]
+    [InlineData("EmptySquad")]
+    public async Task SelectNextAvailableUnit_WithoutNavigableGameState_DoesNothing(string scenario)
+    {
+        if (scenario != "EmptySquad") SetUpSquadNavigation(PhaseNames.End);
+        if (scenario == "NoGame") _sut.Game = null;
+        else SetCurrentState(_sut, new IdleState());
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+
+        await _sut.SelectNextAvailableUnit();
+
+        _sut.IsNextAvailableUnitVisible.ShouldBeFalse();
+        _sut.SelectedUnit.ShouldBeNull();
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+        focused.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(PhaseNames.Deployment)]
+    [InlineData(PhaseNames.Movement)]
+    [InlineData(PhaseNames.WeaponsAttack)]
+    public async Task SelectNextAvailableUnit_WhenActivePlayerIsRemote_DoesNotNavigate(PhaseNames phase)
+    {
+        SetUpSquadNavigation(phase);
+        var remote = new Player(Guid.NewGuid(), "Opponent", PlayerControlType.Human, "#00FF00");
+        _game.HandleCommand(new JoinGameCommand
+        {
+            GameOriginId = Guid.NewGuid(),
+            PlayerId = remote.Id,
+            PlayerName = remote.Name,
+            Units = [MechFactoryTests.CreateDummyMechData()],
+            Tint = remote.Tint,
+            PilotAssignments = [],
+            IdempotencyKey = Guid.NewGuid()
+        });
+        SetActivePlayerWithUnits(remote.Id, 1);
+        _sut.CurrentState.CanHumanPlayerAct().ShouldBeFalse();
+        _sut.CurrentState.IsActiveHumanPlayer().ShouldBeFalse();
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+
+        await _sut.SelectNextAvailableUnit();
+
+        _sut.IsNextAvailableUnitVisible.ShouldBeFalse();
+        _sut.SelectedUnit.ShouldBeNull();
+        focused.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(PhaseNames.Deployment)]
+    [InlineData(PhaseNames.Movement)]
+    [InlineData(PhaseNames.WeaponsAttack)]
+    public async Task SelectNextAvailableUnit_WhenCommandIsPending_DoesNotNavigate(PhaseNames phase)
+    {
+        var unit = SetUpSquadNavigation(phase).Single();
+        var state = _sut.CurrentState;
+        var command = new UpdatePlayerStatusCommand
+        {
+            GameOriginId = _game.Id,
+            PlayerId = unit.Owner!.Id,
+            PlayerStatus = PlayerStatus.Ready
+        };
+        var pendingCommand = _game.SetPlayerReady(command);
+        pendingCommand.IsCompleted.ShouldBeFalse();
+        state.CanHumanPlayerAct().ShouldBeFalse();
+        state.IsActiveHumanPlayer().ShouldBeTrue();
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+
+        await _sut.SelectNextAvailableUnit();
+
+        _sut.IsNextAvailableUnitVisible.ShouldBeFalse();
+        _sut.SelectedUnit.ShouldBeNull();
+        focused.ShouldBeEmpty();
+
+        // Acknowledge the command so the test does not leave a timeout running.
+        _game.HandleCommand(command with { GameOriginId = Guid.NewGuid(), IdempotencyKey = _idempotencyKey });
+        (await pendingCommand).ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(PhaseNames.Deployment)]
+    [InlineData(PhaseNames.Movement)]
+    [InlineData(PhaseNames.WeaponsAttack)]
+    public async Task SelectNextAvailableUnit_SkipsUnitsThatCompletedThePhase(PhaseNames phase)
+    {
+        var squad = SetUpSquadNavigation(phase, 2);
+        var position = new HexPosition(1, 1, HexDirection.Bottom);
+        squad[0].Deploy(position, null);
+        if (phase != PhaseNames.Deployment)
+            squad[1].Deploy(new HexPosition(2, 1, HexDirection.Bottom), null);
+        if (phase == PhaseNames.Movement)
+            squad[0].Move(MovementPath.CreateSingleSegmentPath(position), null, true);
+        if (phase == PhaseNames.WeaponsAttack)
+            squad[0].DeclareWeaponAttack([]);
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+        _sut.IsNextAvailableUnitVisible.ShouldBeTrue();
+
+        await _sut.SelectNextAvailableUnit();
+
+        _sut.SelectedUnit.ShouldBe(squad[1]);
+        focused.ShouldHaveSingleItem().ShouldBe(squad[1]);
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+
+        if (phase == PhaseNames.Deployment)
+            squad[1].Deploy(new HexPosition(2, 1, HexDirection.Bottom), null);
+        if (phase == PhaseNames.Movement)
+            squad[1].Move(MovementPath.CreateSingleSegmentPath(squad[1].Position!), null, true);
+        if (phase == PhaseNames.WeaponsAttack)
+            squad[1].DeclareWeaponAttack([]);
+
+        _sut.IsNextAvailableUnitVisible.ShouldBeFalse();
+        await _sut.SelectNextAvailableUnit();
+        focused.ShouldHaveSingleItem();
+    }
+
+    [Theory]
+    [InlineData(PhaseNames.Deployment)]
+    [InlineData(PhaseNames.Movement)]
+    [InlineData(PhaseNames.WeaponsAttack)]
+    public async Task SelectNextAvailableUnit_WithMultipleLocalPlayers_SelectsOnlyTheActiveOwnersUnit(PhaseNames phase)
+    {
+        var first = JoinPlayerWithUnit("First", "#FF0000");
+        var active = JoinPlayerWithUnit("Active", "#00FF00");
+        SetPhase(phase);
+        SetActivePlayerWithUnits(active.Id, 1);
+        var unit = _sut.LocalUnits.Single(u => u.Owner!.Id == active.Id);
+        _sut.LocalUnits.Count().ShouldBe(2);
+        _game.LocalPlayers.ShouldContain(first.Id);
+        _game.LocalPlayers.ShouldContain(active.Id);
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+
+        await _sut.SelectNextAvailableUnit();
+
+        _sut.SelectedUnit.ShouldBe(unit);
+        focused.ShouldHaveSingleItem().ShouldBe(unit);
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+        _sut.IsRecordSheetPanelVisible.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SelectNextAvailableUnit_DuringDeployment_DoesNotReplaceUnfinishedSelection()
+    {
+        var squad = SetUpSquadNavigation(PhaseNames.Deployment, 2);
+        _sut.SelectedUnit = squad[0];
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+
+        await _sut.SelectNextAvailableUnit();
+
+        _sut.SelectedUnit.ShouldBe(squad[0]);
+        squad.ShouldAllBe(unit => !unit.IsDeployed);
+        _sut.IsNextAvailableUnitVisible.ShouldBeFalse();
+        focused.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task SelectNextAvailableUnit_WhenMovementSelectionIsLocked_DoesNotSelectAnotherUnit()
+    {
+        var squad = SetUpSquadNavigation(PhaseNames.Movement, 2);
+        var mech = squad[0].ShouldBeOfType<Mech>();
+        mech.Deploy(new HexPosition(1, 1, HexDirection.Bottom), null);
+        _sut.SelectedUnit = mech;
+        var state = _sut.CurrentState.ShouldBeOfType<MovementState>();
+        state.HandleMovementTypeSelection(MovementType.Walk);
+        mech.Move(MovementPath.CreateSingleSegmentPath(mech.Position!, MovementType.Walk), null, false);
+        mech.SetProne();
+        state.ResumeMovementAfterFall(mech.Id);
+        state.CanSelectUnit(squad[1]).ShouldBeFalse();
+        mech.Shutdown(new ShutdownData { Reason = ShutdownReason.Heat, Turn = 1 });
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+
+        await _sut.SelectNextAvailableUnit();
+
+        _sut.IsNextAvailableUnitVisible.ShouldBeFalse();
+        _sut.SelectedUnit.ShouldBe(mech);
+        state.CurrentMovementStep.ShouldBe(MovementStep.SelectingMovementType);
+        squad[1].HasMoved.ShouldBeFalse();
+        squad[1].IsShutdown.ShouldBeFalse();
+        focused.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task SelectNextAvailableUnit_WhenOnlySelectedMovementUnitIsAvailable_PreservesUnfinishedMovement()
+    {
+        var unit = SetUpSquadNavigation(PhaseNames.Movement).Single();
+        unit.Deploy(new HexPosition(1, 1, HexDirection.Bottom), null);
+        _sut.SelectedUnit = unit;
+        var state = _sut.CurrentState.ShouldBeOfType<MovementState>();
+        state.HandleMovementTypeSelection(MovementType.Walk);
+        state.HandleHexSelection(_game.BattleMap!.GetHex(new HexCoordinates(1, 2))!);
+        state.HandleFacingSelection(HexDirection.Bottom);
+        state.CurrentMovementStep.ShouldBe(MovementStep.ConfirmMovement);
+        var path = _sut.MovementPath;
+        path.ShouldNotBeNull();
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+
+        await _sut.SelectNextAvailableUnit();
+
+        _sut.SelectedUnit.ShouldBe(unit);
+        state.CurrentMovementStep.ShouldBe(MovementStep.ConfirmMovement);
+        _sut.MovementPath.ShouldBeSameAs(path);
+        _sut.IsDirectionSelectorVisible.ShouldBeTrue();
+        unit.HasMoved.ShouldBeFalse();
+        focused.ShouldHaveSingleItem().ShouldBe(unit);
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+        _commandPublisher.DidNotReceive().PublishCommand(Arg.Any<MoveUnitCommand>());
+    }
+
+    [Fact]
+    public async Task SelectNextAvailableUnit_WhenOnlySelectedAttackerIsAvailable_PreservesUnfinishedAttack()
+    {
+        var unit = SetUpSquadNavigation(PhaseNames.WeaponsAttack).Single();
+        unit.Deploy(new HexPosition(1, 1, HexDirection.Bottom), null);
+        unit.Parts[PartLocation.LeftTorso].TryAddComponent(new MediumLaser(), [1]).ShouldBeTrue();
+        _sut.SelectedUnit = unit;
+        var state = _sut.CurrentState.ShouldBeOfType<WeaponsAttackState>();
+        state.CurrentStep.ShouldBe(WeaponsAttackStep.ActionSelection);
+        var weapon = _sut.WeaponSelectionItems.ShouldHaveSingleItem();
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+
+        await _sut.SelectNextAvailableUnit();
+
+        _sut.Attacker.ShouldBe(unit);
+        _sut.SelectedUnit.ShouldBe(unit);
+        state.CurrentStep.ShouldBe(WeaponsAttackStep.ActionSelection);
+        _sut.WeaponSelectionItems.ShouldHaveSingleItem().ShouldBeSameAs(weapon);
+        unit.HasDeclaredWeaponAttack.ShouldBeFalse();
+        focused.ShouldHaveSingleItem().ShouldBe(unit);
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+        _commandPublisher.DidNotReceive().PublishCommand(Arg.Any<WeaponAttackDeclarationCommand>());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SelectNextAvailableUnit_DuringWeaponsConfigurationOrTargetSelection_DoesNotNavigate(bool selectingTarget)
+    {
+        var unit = SetUpSquadNavigation(PhaseNames.WeaponsAttack).Single();
+        unit.Deploy(new HexPosition(1, 1, HexDirection.Bottom), null);
+        unit.Parts[PartLocation.LeftTorso].TryAddComponent(new MediumLaser(), [1]).ShouldBeTrue();
+        _localizationService.GetString("Action_TurnTorso").Returns("Rotate torso");
+        _sut.SelectedUnit = unit;
+        var state = _sut.CurrentState.ShouldBeOfType<WeaponsAttackState>();
+        var actionLabel = selectingTarget ? "Select Target" : "Rotate torso";
+        _sut.AvailableActions.Single(action => action.Label == actionLabel).OnExecute();
+        var step = selectingTarget ? WeaponsAttackStep.TargetSelection : WeaponsAttackStep.WeaponsConfiguration;
+        state.CurrentStep.ShouldBe(step);
+        var selectedUnit = _sut.SelectedUnit;
+        var focused = new List<IUnit>();
+        _sut.FocusUnit = focused.Add;
+
+        await _sut.SelectNextAvailableUnit();
+
+        _sut.IsNextAvailableUnitVisible.ShouldBeFalse();
+        _sut.SelectedUnit.ShouldBe(selectedUnit);
+        _sut.Attacker.ShouldBe(unit);
+        state.CurrentStep.ShouldBe(step);
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+        focused.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void OpeningCommandLog_ShouldCloseMapSettingsAndRecordSheet()
+    {
+        _sut.IsMapSettingsPanelVisible = true;
+        _sut.IsRecordSheetExpanded = true;
+
+        _sut.ToggleCommandLog();
+
+        _sut.IsCommandLogExpanded.ShouldBeTrue();
+        _sut.IsMapSettingsPanelVisible.ShouldBeFalse();
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+        _sut.IsRecordSheetPanelVisible.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void OpeningMapSettings_ShouldCloseCommandLogAndRecordSheet()
+    {
+        _sut.IsCommandLogExpanded = true;
+        _sut.IsRecordSheetExpanded = true;
+
+        _sut.ToggleMapSettings();
+
+        _sut.IsMapSettingsPanelVisible.ShouldBeTrue();
+        _sut.IsCommandLogExpanded.ShouldBeFalse();
+        _sut.IsRecordSheetExpanded.ShouldBeFalse();
+        _sut.IsRecordSheetPanelVisible.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void OpeningRecordSheet_ShouldCloseUtilityPanels()
+    {
+        _sut.IsCommandLogExpanded = true;
+        _sut.IsMapSettingsPanelVisible = true;
+
+        _sut.IsRecordSheetExpanded = true;
+
+        _sut.IsRecordSheetExpanded.ShouldBeTrue();
+        _sut.IsCommandLogExpanded.ShouldBeFalse();
+        _sut.IsMapSettingsPanelVisible.ShouldBeFalse();
+    }
+
+    private void OpenUtilityPanel(string panel)
+    {
+        switch (panel)
+        {
+            case "RecordSheet":
+                _sut.IsRecordSheetExpanded = true;
+                break;
+            case "CommandLog":
+                _sut.ToggleCommandLog();
+                break;
+            case "MapSettings":
+                _sut.ToggleMapSettings();
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(panel));
+        }
+    }
+
+    [Theory]
+    [InlineData("RecordSheet")]
+    [InlineData("CommandLog")]
+    [InlineData("MapSettings")]
+    public void OpeningUtilityPanel_DuringMovementDirectionSelection_AllowsMovementToContinue(string panel)
+    {
+        var unit = SetUpSquadNavigation(PhaseNames.Movement).Single();
+        unit.Deploy(new HexPosition(1, 1, HexDirection.Bottom), null);
+        _sut.SelectedUnit = unit;
+        var state = _sut.CurrentState.ShouldBeOfType<MovementState>();
+        state.HandleMovementTypeSelection(MovementType.Walk);
+        var targetHex = _game.BattleMap!.GetHex(new HexCoordinates(1, 2))!;
+        _sut.HandleHexSelection(targetHex);
+        state.CurrentMovementStep.ShouldBe(MovementStep.SelectingDirection);
+        _sut.IsDirectionSelectorVisible.ShouldBeTrue();
+
+        OpenUtilityPanel(panel);
+
+        state.CurrentMovementStep.ShouldBe(MovementStep.SelectingDirection);
+        _sut.IsDirectionSelectorVisible.ShouldBeTrue();
+        _sut.SelectedUnit.ShouldBe(unit);
+        unit.HasMoved.ShouldBeFalse();
+        _commandPublisher.DidNotReceive().PublishCommand(Arg.Any<MoveUnitCommand>());
+
+        state.HandleFacingSelection(HexDirection.Bottom);
+        MoveUnitCommand? sentCommand = null;
+        _commandPublisher.When(publisher => publisher.PublishCommand(Arg.Any<IGameCommand>()))
+            .Do(callInfo =>
+            {
+                if (callInfo.Arg<IGameCommand>() is MoveUnitCommand command)
+                    sentCommand = command;
+            });
+        _sut.HandlePlayerAction();
+
+        state.CurrentMovementStep.ShouldBe(MovementStep.Completed);
+        _commandPublisher.Received(1).PublishCommand(Arg.Is<MoveUnitCommand>(command =>
+            command.UnitId == unit.Id && command.MovementType == MovementType.Walk &&
+            command.MovementPath.Last().To.Coordinates.Q == 1 &&
+            command.MovementPath.Last().To.Coordinates.R == 2));
+        sentCommand.ShouldNotBeNull();
+        _game.HandleCommand(sentCommand.Value with { GameOriginId = Guid.NewGuid() });
+        unit.HasMoved.ShouldBeTrue();
     }
 
     private ClientGame CreateClientGame()
