@@ -255,26 +255,28 @@ public static class CoreServices
                         IsActive: true,
                         IsDefault: true,
                         SortOrder: 0));
-            }
-            // Record sheet artwork lives in MegaMek's data repository, so it is seeded as its own
-            // default provider per asset type rather than reusing the game's own data repository.
-            var recordSheetDefaults = new[]
-            {
-                ("record-sheet-templates", AssetType.RecordSheetTemplates),
-                ("record-sheet-pips", AssetType.RecordSheetPips),
-                ("unit-fluff", AssetType.UnitFluff)
-            };
-            foreach (var (id, assetType) in recordSheetDefaults)
-            {
-                defaults.Add(
-                    new AssetProviderConfigData(
-                        id,
-                        ProviderType.GitHub,
-                        assetType,
-                        MegaMekDefaults.BaseUrl,
-                        IsActive: true,
-                        IsDefault: true,
-                        SortOrder: 0));
+
+                // Record sheet templates, pips and artwork live in MegaMek's data repository. Like the
+                // GitHub source above, this is the dev fallback only: a build with the bucket configured
+                // seeds no record sheet source, and the record sheet tab stays hidden.
+                var recordSheetDefaults = new[]
+                {
+                    ("record-sheet-templates", AssetType.RecordSheetTemplates),
+                    ("record-sheet-pips", AssetType.RecordSheetPips),
+                    ("unit-fluff", AssetType.UnitFluff)
+                };
+                foreach (var (id, assetType) in recordSheetDefaults)
+                {
+                    defaults.Add(
+                        new AssetProviderConfigData(
+                            id,
+                            ProviderType.GitHub,
+                            assetType,
+                            MegaMekDefaults.BaseUrl,
+                            IsActive: true,
+                            IsDefault: true,
+                            SortOrder: 0));
+                }
             }
 
             return new AssetProviderConfigurationProvider(

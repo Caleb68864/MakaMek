@@ -112,7 +112,6 @@ public partial class App : Application
                 {
                     ViewModel = viewModel
                 };
-                singleViewPlatform.MainView = mainViewWrapper;
                 break;
         }
 
